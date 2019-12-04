@@ -44,7 +44,7 @@ export class VSXRegistryContribution extends AbstractViewContribution<VSXRegistr
                 area: 'left',
                 rank: 500
             },
-            toggleCommandId: 'vsCodeExtensionsView:toggle',
+            toggleCommandId: 'vsxRegistryView:toggle',
             toggleKeybinding: 'ctrlcmd+shift+x'
         });
     }

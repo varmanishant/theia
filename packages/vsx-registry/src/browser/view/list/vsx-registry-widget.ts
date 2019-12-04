@@ -74,13 +74,13 @@ export class VSXRegistryWidget extends ViewContainer {
         });
 
         const onDidChange = this.service.onDidUpdateSearch;
-        this.toolbarRegistry.registerItem({
+        this.toDispose.push(this.toolbarRegistry.registerItem({
             id: VSCodeExtensionsCommands.CLEAR_ALL.id,
             command: VSCodeExtensionsCommands.CLEAR_ALL.id,
             tooltip: VSCodeExtensionsCommands.CLEAR_ALL.label,
             priority: 1,
             onDidChange
-        });
+        }));
 
         this.progressLocation = 'vsx-registry-list';
         const onProgress = this.progressLocationService.onProgress(this.progressLocation);

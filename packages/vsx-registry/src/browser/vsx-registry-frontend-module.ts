@@ -14,7 +14,7 @@
  * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
  ********************************************************************************/
 
-import { ContainerModule } from 'inversify';
+import { ContainerModule, interfaces } from 'inversify';
 import { WidgetFactory, bindViewContribution, FrontendApplicationContribution, ViewContainerIdentifier, OpenHandler } from '@theia/core/lib/browser';
 import { VSXRegistryWidget, VSXRegistryInstalledList, VSXRegistryList } from './view/list/vsx-registry-widget';
 import { VSXRegistryContribution } from './vsx-registry-contribution';
@@ -38,25 +38,11 @@ export default new ContainerModule(bind => {
     bind(VSXRegistryModel).toSelf().inSingletonScope();
     bind(VSXRegistryAPI).toSelf().inSingletonScope();
 
-    bind(VSXRegistryInstalledList).toDynamicValue(({ container }) =>
-        VSXRegistryListWidget.createWidget(container,
-            {
-                id: 'installed_extension_list',
-                label: 'Installed Extensions',
-                location: 'installed'
-            }));
-    bind(VSXRegistryList).toDynamicValue(({ container }) =>
-        VSXRegistryListWidget.createWidget(container,
-            {
-                id: 'extension_list',
-                label: 'Open VSX Registry',
-                location: 'registry'
-            }));
-
     bind(WidgetFactory).toDynamicValue(ctx => ({
         id: VSXRegistryWidget.ID,
         createWidget: async () => {
             const container = ctx.container.createChild();
+            bindViewContainer(container);
             container.bind(ViewContainerIdentifier).toConstantValue({ id: VSXRegistryWidget.ID });
             container.bind(VSXRegistryWidget).toSelf().inSingletonScope();
             return container.get(VSXRegistryWidget);
@@ -71,3 +57,20 @@ export default new ContainerModule(bind => {
 
     bindVSXRegistryPreferences(bind);
 });
+
+export function bindViewContainer(parent: interfaces.Container): void {
+    parent.bind(VSXRegistryInstalledList).toDynamicValue(({ container }) =>
+        VSXRegistryListWidget.createWidget(container,
+            {
+                id: 'installed_extension_list',
+                label: 'Installed Extensions',
+                location: 'installed'
+            }));
+    parent.bind(VSXRegistryList).toDynamicValue(({ container }) =>
+        VSXRegistryListWidget.createWidget(container,
+            {
+                id: 'extension_list',
+                label: 'Open VSX Registry',
+                location: 'registry'
+            }));
+}

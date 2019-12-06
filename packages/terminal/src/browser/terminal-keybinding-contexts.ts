@@ -46,7 +46,7 @@ export class TerminalHideSearchContext implements KeybindingContext {
         if (!(this.shell.activeWidget instanceof TerminalWidget)) {
             return false;
         }
-        const searchWidget = (this.shell.activeWidget as TerminalWidget).getSearchBox();
-        return searchWidget.isDisplayed();
+        const searchWidget = this.shell.activeWidget.getSearchBox();
+        return searchWidget.isVisible;
     }
 }

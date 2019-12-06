@@ -33,8 +33,7 @@ import { TerminalPreferences, TerminalRendererType, isTerminalRendererType, DEFA
 import { TerminalContribution } from './terminal-contribution';
 import URI from '@theia/core/lib/common/uri';
 import { TerminalService } from './base/terminal-service';
-import { TerminalSearchBox } from './base/terminal-search-box';
-import { TerminalSearchWidgetFactory } from './search/terminal-search-widget';
+import { TerminalSearchWidgetFactory, TerminalSearchWidget } from './search/terminal-search-widget';
 import { TerminalCopyOnSelectionHandler } from './terminal-copy-on-selection-handler';
 
 export const TERMINAL_WIDGET_FACTORY_ID = 'terminal';
@@ -62,7 +61,7 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
     protected readonly onTermDidClose = new Emitter<TerminalWidget>();
     protected terminalId = -1;
     protected term: Xterm.Terminal;
-    protected searchBox: TerminalSearchBox;
+    protected searchBox: TerminalSearchWidget;
     protected restored = false;
     protected closeOnDispose = true;
     protected waitForConnection: Deferred<MessageConnection> | undefined;
@@ -214,7 +213,6 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         }
 
         this.searchBox = this.terminalSearchBoxFactory(this.term);
-        this.searchBox.attach(this.node);
         this.toDispose.push(this.searchBox);
     }
 
@@ -245,7 +243,7 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         return this.term;
     }
 
-    getSearchBox(): TerminalSearchBox {
+    getSearchBox(): TerminalSearchWidget {
         return this.searchBox;
     }
 
@@ -400,6 +398,7 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         this.update();
     }
     protected onAfterAttach(msg: Message): void {
+        Widget.attach(this.searchBox, this.node);
         super.onAfterAttach(msg);
         this.update();
     }

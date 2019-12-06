@@ -81,15 +81,14 @@ export namespace TerminalCommands {
         category: TERMINAL_CATEGORY,
         label: 'Split Terminal'
     };
-    const TERMINAL_SEARCH_CATEGORY = 'TerminalSearch';
     export const TERMINAL_FIND_TEXT: Command = {
         id: 'terminal:find',
-        category: TERMINAL_SEARCH_CATEGORY,
+        category: TERMINAL_CATEGORY,
         label: 'Find'
     };
     export const TERMINAL_FIND_TEXT_CANCEL: Command = {
         id: 'terminal:find:cancel',
-        category: TERMINAL_SEARCH_CATEGORY,
+        category: TERMINAL_CATEGORY,
         label: 'Hide find widget'
     };
     /**
@@ -233,7 +232,12 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
 
         commands.registerCommand(TerminalCommands.TERMINAL_FIND_TEXT);
         commands.registerHandler(TerminalCommands.TERMINAL_FIND_TEXT.id, {
-            isEnabled: () => this.shell.activeWidget instanceof TerminalWidget,
+            isEnabled: () => {
+                if (this.shell.activeWidget instanceof TerminalWidget) {
+                    return !this.shell.activeWidget.getSearchBox().isVisible;
+                }
+                return false;
+            } ,
             execute: () => {
                 const termWidget = (this.shell.activeWidget as TerminalWidget);
                 const terminalSearchBox = termWidget.getSearchBox();
@@ -242,7 +246,12 @@ export class TerminalFrontendContribution implements TerminalService, CommandCon
         });
         commands.registerCommand(TerminalCommands.TERMINAL_FIND_TEXT_CANCEL);
         commands.registerHandler(TerminalCommands.TERMINAL_FIND_TEXT_CANCEL.id, {
-            isEnabled: () => this.shell.activeWidget instanceof TerminalWidget,
+            isEnabled: () => {
+                if (this.shell.activeWidget instanceof TerminalWidget) {
+                    return this.shell.activeWidget.getSearchBox().isVisible;
+                }
+                return false;
+            },
             execute: () => {
                 const termWidget = (this.shell.activeWidget as TerminalWidget);
                 const terminalSearchBox = termWidget.getSearchBox();

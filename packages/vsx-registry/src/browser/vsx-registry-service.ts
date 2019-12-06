@@ -52,9 +52,10 @@ export class VSXRegistryService {
     protected async init(): Promise<void> {
         this.vsxRegistryPreferences.onPreferenceChanged(e => {
             this.apiUrl = this.vsxRegistryPreferences['vsx-registry.api-url'];
+            this.toDispose.push(this.pluginSupport.onDidChangePlugins(() => this.updateInstalled()));
             this.updateSearch();
+            this.updateInstalled();
         });
-        this.toDispose.push(this.pluginSupport.onDidChangePlugins(() => this.updateInstalled()));
     }
 
     protected createEndpoint(arr: string[], queries?: { key: string, value: string | number }[]): string {
@@ -100,10 +101,8 @@ export class VSXRegistryService {
     }
 
     async uninstall(extension: VSCodeExtensionPart): Promise<void> {
-        let res: () => void;
-        const p = new Promise<void>(r => res = r);
-        setTimeout(() => res(), 3000);
-        return p;
+        const id = extension.publisher.toLowerCase() + '.' + extension.name.toLowerCase();
+        await this.pluginServer.undeploy(id);
     }
 
     async outdated(): Promise<VSCodeExtensionPart[]> {

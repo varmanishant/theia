@@ -104,6 +104,11 @@ export class PluginDeployerImpl implements PluginDeployer {
 
     }
 
+    public async undeploy(pluginId: string): Promise<void> {
+        this.pluginDeployerHandler.removeDeployedPluginId(pluginId);
+        this.onDidDeployEmitter.fire();
+    }
+
     public async deploy(pluginEntry: string): Promise<void> {
         await this.deployMultipleEntries([pluginEntry]);
     }

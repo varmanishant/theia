@@ -61,9 +61,14 @@ export class VSXRegistryListWidget extends ReactWidget {
         this.title.label = this.options.label;
 
         this.model.onExtensionsChanged(() => {
-            this.extensions = this.model.getExtensionsByLocation(this.options.location);
-            this.update();
+            this.updateExtensionList();
         });
+        this.updateExtensionList();
+    }
+
+    protected updateExtensionList(): void {
+        this.extensions = this.model.getExtensionsByLocation(this.options.location);
+        this.update();
     }
 
     protected render(): React.ReactNode {

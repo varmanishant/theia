@@ -109,6 +109,7 @@ export class VSXRegistryWidget extends ViewContainer {
         });
         this.panel.node.tabIndex = -1;
         layout.addWidget(this.vscxSearchbar);
+        this.vscxSearchbar.update();
         layout.addWidget(this.panel);
     }
 }

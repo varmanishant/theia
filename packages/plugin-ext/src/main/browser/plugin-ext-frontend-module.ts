@@ -15,11 +15,12 @@
  ********************************************************************************/
 
 import '../../../src/main/style/status-bar.css';
+import '../../../src/main/browser/style/index.css';
 
 import { ContainerModule } from 'inversify';
 import {
     FrontendApplicationContribution, FrontendApplication, WidgetFactory, bindViewContribution,
-    ViewContainerIdentifier, ViewContainer, createTreeContainer, TreeImpl, TreeWidget, TreeModelImpl
+    ViewContainerIdentifier, ViewContainer, createTreeContainer, TreeImpl, TreeWidget, TreeModelImpl, OpenHandler
 } from '@theia/core/lib/browser';
 import { MaybePromise, CommandContribution, ResourceResolver, bindContributionProvider } from '@theia/core/lib/common';
 import { WebSocketConnectionProvider } from '@theia/core/lib/browser/messaging';
@@ -31,11 +32,9 @@ import { HostedPluginServer, hostedServicePath, PluginServer, pluginServerJsonRp
 import { ModalNotification } from './dialogs/modal-notification';
 import { PluginWidget } from './plugin-ext-widget';
 import { PluginFrontendViewContribution } from './plugin-frontend-view-contribution';
-
-import '../../../src/main/browser/style/index.css';
 import { PluginExtDeployCommandService } from './plugin-ext-deploy-command';
-import { TextEditorService, TextEditorServiceImpl } from './text-editor-service';
-import { EditorModelService, EditorModelServiceImpl } from './text-editor-model-service';
+import { TextEditorService } from './text-editor-service';
+import { EditorModelService } from './text-editor-model-service';
 import { UntitledResourceResolver } from './editor/untitled-resource';
 import { MenusContributionPointHandler } from './menus/menus-contribution-handler';
 import { PluginContributionHandler } from './plugin-contribution-handler';
@@ -48,7 +47,6 @@ import { LanguageClientProvider } from '@theia/languages/lib/browser/language-cl
 import { LanguageClientProviderImpl } from './language-provider/plugin-language-client-provider';
 import { LanguageClientContributionProviderImpl } from './language-provider/language-client-contribution-provider-impl';
 import { LanguageClientContributionProvider } from './language-provider/language-client-contribution-provider';
-import { StoragePathService } from './storage-path-service';
 import { DebugSessionContributionRegistry } from '@theia/debug/lib/browser/debug-session-contribution';
 import { PluginDebugSessionContributionRegistry } from './debug/plugin-debug-session-contribution-registry';
 import { PluginDebugService } from './debug/plugin-debug-service';
@@ -60,8 +58,33 @@ import { ViewColumnService } from './view-column-service';
 import { ViewContextKeyService } from './view/view-context-key-service';
 import { PluginViewWidget, PluginViewWidgetIdentifier } from './view/plugin-view-widget';
 import { TreeViewWidgetIdentifier, VIEW_ITEM_CONTEXT_MENU, PluginTree, TreeViewWidget, PluginTreeModel } from './view/tree-view-widget';
+import { RPCProtocol } from '../../common/rpc-protocol';
+import { LanguagesMainFactory, OutputChannelRegistryFactory } from '../../common';
+import { LanguagesMainImpl } from './languages-main';
+import { OutputChannelRegistryMainImpl } from './output-channel-registry-main';
+import { InPluginFileSystemWatcherManager } from './in-plugin-filesystem-watcher-manager';
+import { WebviewWidget, WebviewWidgetIdentifier, WebviewWidgetExternalEndpoint } from './webview/webview';
+import { WebviewEnvironment } from './webview/webview-environment';
+import { WebviewThemeDataProvider } from './webview/webview-theme-data-provider';
+import { PluginCommandOpenHandler } from './plugin-command-open-handler';
+import { bindWebviewPreferences } from './webview/webview-preferences';
+import { WebviewResourceLoader, WebviewResourceLoaderPath } from '../common/webview-protocol';
+import { WebviewResourceCache } from './webview/webview-resource-cache';
 
 export default new ContainerModule((bind, unbind, isBound, rebind) => {
+
+    bind(LanguagesMainImpl).toSelf().inTransientScope();
+    bind(LanguagesMainFactory).toFactory(context => (rpc: RPCProtocol) => {
+        const child = context.container.createChild();
+        child.bind(RPCProtocol).toConstantValue(rpc);
+        return child.get(LanguagesMainImpl);
+    });
+
+    bind(OutputChannelRegistryMainImpl).toSelf().inTransientScope();
+    bind(OutputChannelRegistryFactory).toFactory(context => () => {
+        const child = context.container.createChild();
+        return child.get(OutputChannelRegistryMainImpl);
+    });
 
     bind(ModalNotification).toSelf().inSingletonScope();
 
@@ -74,15 +97,15 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(PluginApiFrontendContribution).toSelf().inSingletonScope();
     bind(CommandContribution).toService(PluginApiFrontendContribution);
 
-    bind(TextEditorService).to(TextEditorServiceImpl).inSingletonScope();
-    bind(EditorModelService).to(EditorModelServiceImpl).inSingletonScope();
+    bind(TextEditorService).toSelf().inSingletonScope();
+    bind(EditorModelService).toSelf().inSingletonScope();
 
     bind(UntitledResourceResolver).toSelf().inSingletonScope();
     bind(ResourceResolver).toService(UntitledResourceResolver);
 
     bind(FrontendApplicationContribution).toDynamicValue(ctx => ({
         onStart(app: FrontendApplication): MaybePromise<void> {
-            ctx.container.get(HostedPluginSupport).checkAndLoadPlugin(ctx.container);
+            ctx.container.get(HostedPluginSupport).onStart(ctx.container);
         }
     }));
     bind(HostedPluginServer).toDynamicValue(ctx => {
@@ -95,7 +118,6 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         const connection = ctx.container.get(WebSocketConnectionProvider);
         return connection.createProxy<PluginPathsService>(pluginPathsServicePath);
     }).inSingletonScope();
-    bind(StoragePathService).toSelf().inSingletonScope();
 
     bindViewContribution(bind, PluginFrontendViewContribution);
 
@@ -131,6 +153,33 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
         }
     })).inSingletonScope();
 
+    bind(PluginCommandOpenHandler).toSelf().inSingletonScope();
+    bind(OpenHandler).toService(PluginCommandOpenHandler);
+
+    bindWebviewPreferences(bind);
+    bind(WebviewEnvironment).toSelf().inSingletonScope();
+    bind(WebviewThemeDataProvider).toSelf().inSingletonScope();
+    bind(WebviewResourceLoader).toDynamicValue(ctx =>
+        WebSocketConnectionProvider.createProxy(ctx.container, WebviewResourceLoaderPath)
+    ).inSingletonScope();
+    bind(WebviewResourceCache).toSelf().inSingletonScope();
+    bind(WebviewWidget).toSelf();
+    bind(WidgetFactory).toDynamicValue(({ container }) => ({
+        id: WebviewWidget.FACTORY_ID,
+        createWidget: async (identifier: WebviewWidgetIdentifier) => {
+            const externalEndpoint = await container.get(WebviewEnvironment).externalEndpoint();
+            let endpoint = externalEndpoint.replace('{{uuid}}', identifier.id);
+            if (endpoint[endpoint.length - 1] === '/') {
+                endpoint = endpoint.slice(0, endpoint.length - 1);
+            }
+
+            const child = container.createChild();
+            child.bind(WebviewWidgetIdentifier).toConstantValue(identifier);
+            child.bind(WebviewWidgetExternalEndpoint).toConstantValue(endpoint);
+            return child.get(WebviewWidget);
+        }
+    })).inSingletonScope();
+
     bind(PluginViewWidget).toSelf();
     bind(WidgetFactory).toDynamicValue(({ container }) => ({
         id: PLUGIN_VIEW_FACTORY_ID,
@@ -155,6 +204,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
 
     bind(PluginContributionHandler).toSelf().inSingletonScope();
 
+    bind(InPluginFileSystemWatcherManager).toSelf().inSingletonScope();
     bind(TextContentResourceResolver).toSelf().inSingletonScope();
     bind(ResourceResolver).toService(TextContentResourceResolver);
     bind(FSResourceResolver).toSelf().inSingletonScope();

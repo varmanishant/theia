@@ -18,10 +18,14 @@ import '../../src/browser/style/index.css';
 import '../../src/browser/style/symbol-sprite.svg';
 import '../../src/browser/style/symbol-icons.css';
 
+import debounce = require('lodash.debounce');
 import { ContainerModule, decorate, injectable, interfaces } from 'inversify';
 import { MenuContribution, CommandContribution } from '@theia/core/lib/common';
 import { PreferenceScope } from '@theia/core/lib/common/preferences/preference-scope';
-import { QuickOpenService, FrontendApplicationContribution, KeybindingContribution, PreferenceServiceImpl } from '@theia/core/lib/browser';
+import {
+    QuickOpenService, FrontendApplicationContribution, KeybindingContribution,
+    PreferenceService, PreferenceSchemaProvider, createPreferenceProxy
+} from '@theia/core/lib/browser';
 import { Languages, Workspace } from '@theia/languages/lib/browser';
 import { TextEditorProvider, DiffNavigatorProvider } from '@theia/editor/lib/browser';
 import { StrictEditorTextFocusContext } from '@theia/editor/lib/browser/editor-keybinding-contexts';
@@ -55,10 +59,9 @@ import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import { MonacoContextKeyService } from './monaco-context-key-service';
 import { MonacoMimeService } from './monaco-mime-service';
 import { MimeService } from '@theia/core/lib/browser/mime-service';
-
-import debounce = require('lodash.debounce');
-
-const deepmerge: (args: object[]) => object = require('deepmerge').default.all;
+import { MonacoEditorServices } from './monaco-editor';
+import { MonacoColorRegistry } from './monaco-color-registry';
+import { ColorRegistry } from '@theia/core/lib/browser/color-registry';
 
 decorate(injectable(), MonacoToProtocolConverter);
 decorate(injectable(), ProtocolToMonacoConverter);
@@ -91,6 +94,7 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
     bind(MonacoEditorService).toSelf().inSingletonScope();
     bind(MonacoTextModelService).toSelf().inSingletonScope();
     bind(MonacoContextMenuService).toSelf().inSingletonScope();
+    bind(MonacoEditorServices).toSelf().inSingletonScope();
     bind(MonacoEditorProvider).toSelf().inSingletonScope();
     bind(MonacoCommandService).toSelf().inTransientScope();
     bind(MonacoCommandServiceFactory).toAutoFactory(MonacoCommandService);
@@ -127,32 +131,35 @@ export default new ContainerModule((bind, unbind, isBound, rebind) => {
 
     bind(MonacoMimeService).toSelf().inSingletonScope();
     rebind(MimeService).toService(MonacoMimeService);
+
+    bind(MonacoColorRegistry).toSelf().inSingletonScope();
+    rebind(ColorRegistry).toService(MonacoColorRegistry);
 });
 
 export const MonacoConfigurationService = Symbol('MonacoConfigurationService');
 export function createMonacoConfigurationService(container: interfaces.Container): monaco.services.IConfigurationService {
     const configurations = container.get(MonacoConfigurations);
-    const preferences = container.get(PreferenceServiceImpl);
+    const preferences = container.get<PreferenceService>(PreferenceService);
+    const preferenceSchemaProvider = container.get<PreferenceSchemaProvider>(PreferenceSchemaProvider);
     const service = monaco.services.StaticServices.configurationService.get();
     const _configuration = service._configuration;
 
-    const getValue = _configuration.getValue.bind(_configuration);
     _configuration.getValue = (section, overrides, workspace) => {
-        const preferenceConfig = configurations.getConfiguration();
+        const overrideIdentifier = overrides && 'overrideIdentifier' in overrides && overrides['overrideIdentifier'] as string || undefined;
+        const resourceUri = overrides && 'resource' in overrides && overrides['resource'].toString();
+        // tslint:disable-next-line:no-any
+        const proxy = createPreferenceProxy<{ [key: string]: any }>(preferences, preferenceSchemaProvider.getCombinedSchema(), {
+            resourceUri, overrideIdentifier, style: 'both'
+        });
         if (section) {
-            const value = preferenceConfig.get(section);
-            return value !== undefined ? value : getValue(section, overrides, workspace);
+            return proxy[section];
         }
-        const simpleConfig = getValue(section, overrides, workspace);
-        if (typeof simpleConfig === 'object') {
-            return deepmerge([{}, simpleConfig, preferenceConfig.toJSON()]);
-        }
-        return preferenceConfig.toJSON();
+        return proxy;
     };
 
     const initFromConfiguration = debounce(() => {
         const event = new monaco.services.ConfigurationChangeEvent();
-        event._source = monaco.services.ConfigurationTarget.DEFAULT;
+        event._source = 6 /* DEFAULT */;
         service._onDidChangeConfiguration.fire(event);
     });
     preferences.onPreferenceChanged(e => {
@@ -160,10 +167,12 @@ export function createMonacoConfigurationService(container: interfaces.Container
             initFromConfiguration();
         }
     });
-    preferences.onPreferencesChanged(changes => {
-        const event = new monaco.services.ConfigurationChangeEvent();
-        event.change(Object.keys(changes));
-        service._onDidChangeConfiguration.fire(event);
+    configurations.onDidChangeConfiguration(e => {
+        if (e.affectedSections) {
+            const event = new monaco.services.ConfigurationChangeEvent();
+            event.change(e.affectedSections);
+            service._onDidChangeConfiguration.fire(event);
+        }
     });
 
     return service;

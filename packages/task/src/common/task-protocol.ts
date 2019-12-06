@@ -15,6 +15,7 @@
  ********************************************************************************/
 
 import { JsonRpcServer } from '@theia/core/lib/common/messaging/proxy-factory';
+import { IJSONSchema } from '@theia/core/lib/common/json-schema';
 import { ProblemMatcher, ProblemMatch, WatchingPattern } from './problem-matcher-protocol';
 
 export const taskPath = '/services/task';
@@ -24,20 +25,38 @@ export const TaskClient = Symbol('TaskClient');
 
 export interface TaskCustomization {
     type: string;
+    group?: 'build' | 'test' | 'none' | { kind: 'build' | 'test' | 'none', isDefault: true };
     problemMatcher?: string | ProblemMatcherContribution | (string | ProblemMatcherContribution)[];
     // tslint:disable-next-line:no-any
     [name: string]: any;
+}
+export namespace TaskCustomization {
+    export function isBuildTask(task: TaskCustomization): boolean {
+        return task.group === 'build' || !!task.group && typeof task.group === 'object' && task.group.kind === 'build';
+    }
+
+    export function isDefaultBuildTask(task: TaskCustomization): boolean {
+        return !!task.group && typeof task.group === 'object' && task.group.kind === 'build' && task.group.isDefault;
+    }
+
+    export function isTestTask(task: TaskCustomization): boolean {
+        return task.group === 'test' || !!task.group && typeof task.group === 'object' && task.group.kind === 'test';
+    }
+
+    export function isDefaultTestTask(task: TaskCustomization): boolean {
+        return !!task.group && typeof task.group === 'object' && task.group.kind === 'test' && task.group.isDefault;
+    }
 }
 
 export interface TaskConfiguration extends TaskCustomization {
     /** A label that uniquely identifies a task configuration per source */
     readonly label: string;
-}
-export namespace TaskConfiguration {
-    export function equals(one: TaskConfiguration, other: TaskConfiguration): boolean {
-        return (one.taskType || one.type) === (other.taskType || other.type) &&
-            one.label === other.label && one._source === other._source;
-    }
+    /**
+     * For a provided task, it is the string representation of the URI where the task is supposed to run from. It is `undefined` for global tasks.
+     * For a configured task, it is workspace URI that task belongs to.
+     * This field is not supposed to be used in `tasks.json`
+     */
+    readonly _scope: string | undefined;
 }
 
 export interface ContributedTaskConfiguration extends TaskConfiguration {
@@ -47,16 +66,6 @@ export interface ContributedTaskConfiguration extends TaskConfiguration {
      * This field is not supposed to be used in `tasks.json`
      */
     readonly _source: string;
-    /**
-     * For a provided task, it is the string representation of the URI where the task is supposed to run from. It is `undefined` for global tasks.
-     * This field is not supposed to be used in `tasks.json`
-     */
-    readonly _scope: string | undefined;
-}
-export namespace ContributedTaskConfiguration {
-    export function equals(one: TaskConfiguration, other: TaskConfiguration): boolean {
-        return TaskConfiguration.equals(one, other) && one._scope === other._scope;
-    }
 }
 
 /** Runtime information about Task. */
@@ -139,9 +148,11 @@ export interface TaskClient {
 
 export interface TaskDefinition {
     taskType: string;
+    source: string;
     properties: {
         required: string[];
         all: string[];
+        schema: IJSONSchema;
     }
 }
 
@@ -178,8 +189,10 @@ export interface ProblemPatternContribution {
     location?: number;
     line?: number;
     character?: number;
+    column?: number;
     endLine?: number;
     endCharacter?: number;
+    endColumn?: number;
     code?: number;
     severity?: number;
     loop?: boolean;

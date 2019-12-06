@@ -31,10 +31,12 @@
         "--hostname=localhost",
         "--no-cluster",
         "--app-project-path=${workspaceRoot}/examples/electron",
+        "--remote-debugging-port=9222",
         "--no-app-auto-install"
       ],
       "env": {
-        "NODE_ENV": "development"
+        "NODE_ENV": "development",
+        "THEIA_WEBVIEW_EXTERNAL_ENDPOINT": "${env:THEIA_WEBVIEW_EXTERNAL_ENDPOINT}"
       },
       "sourceMaps": true,
       "outFiles": [
@@ -51,18 +53,19 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Launch Backend",
+      "name": "Launch Browser Backend",
       "program": "${workspaceRoot}/examples/browser/src-gen/backend/main.js",
       "args": [
         "--hostname=0.0.0.0",
         "--port=3000",
         "--no-cluster",
         "--app-project-path=${workspaceRoot}/examples/browser",
-        "--no-app-auto-install",
-        "--plugins=local-dir:plugins"
+        "--plugins=local-dir:plugins",
+        "--hosted-plugin-inspect=9339"
       ],
       "env": {
-        "NODE_ENV": "development"
+        "NODE_ENV": "development",
+        "THEIA_WEBVIEW_EXTERNAL_ENDPOINT": "${env:THEIA_WEBVIEW_EXTERNAL_ENDPOINT}"
       },
       "sourceMaps": true,
       "outFiles": [
@@ -77,8 +80,23 @@
     },
     {
       "type": "node",
+      "request": "attach",
+      "name": "Attach to Plugin Host",
+      "port": 9339,
+      "timeout": 60000,
+      "stopOnEntry": false,
+      "smartStep": true,
+      "sourceMaps": true,
+      "internalConsoleOptions": "openOnSessionStart",
+      "outFiles": [
+        "${workspaceRoot}/packages/plugin-ext/lib/**/*.js",
+        "${workspaceRoot}/plugins/**/*.js"
+      ]
+    },
+    {
+      "type": "node",
       "request": "launch",
-      "name": "Launch Backend (eclipse.jdt.ls)",
+      "name": "Launch Browser Backend (eclipse.jdt.ls)",
       "program": "${workspaceRoot}/examples/browser/src-gen/backend/main.js",
       "args": [
         "--log-level=debug",
@@ -88,7 +106,8 @@
         "--no-app-auto-install"
       ],
       "env": {
-        "NODE_ENV": "development"
+        "NODE_ENV": "development",
+        "THEIA_WEBVIEW_EXTERNAL_ENDPOINT": "${env:THEIA_WEBVIEW_EXTERNAL_ENDPOINT}"
       },
       "sourceMaps": true,
       "outFiles": [
@@ -105,7 +124,7 @@
       "type": "node",
       "request": "launch",
       "protocol": "inspector",
-      "name": "Run Mocha Test",
+      "name": "Run Mocha Tests",
       "program": "${workspaceRoot}/node_modules/mocha/bin/_mocha",
       "args": [
         "--no-timeouts",
@@ -123,11 +142,17 @@
       "outputCapture": "std"
     },
     {
-      "name": "Launch Frontend",
+      "name": "Launch Browser Frontend",
       "type": "chrome",
       "request": "launch",
       "url": "http://localhost:3000/",
       "webRoot": "${workspaceRoot}"
+    },
+    {
+      "type": "chrome",
+      "request": "attach",
+      "name": "Attach to Electron Frontend",
+      "port": 9222
     },
     {
       "name": "Launch VS Code Tests",
@@ -144,12 +169,22 @@
         "--hosted-plugin-inspect=9339"
       ],
       "env": {
-        "THEIA_DEFAULT_PLUGINS": "local-dir:${workspaceFolder}/plugins"
+        "THEIA_DEFAULT_PLUGINS": "local-dir:${workspaceFolder}/plugins",
+        "THEIA_WEBVIEW_EXTERNAL_ENDPOINT": "${env:THEIA_WEBVIEW_EXTERNAL_ENDPOINT}"
       },
       "stopOnEntry": false,
       "sourceMaps": true,
       "outFiles": [
         "${workspaceFolder}/../.js"
+      ]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Launch Electron Backend & Frontend",
+      "configurations": [
+        "Launch Electron Backend",
+        "Attach to Electron Frontend"
       ]
     }
   ]

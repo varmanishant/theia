@@ -33,7 +33,7 @@ export interface TreeModel extends Tree, TreeSelectionService, TreeExpansionServ
      * Expands the given node. If the `node` argument is `undefined`, then expands the currently selected tree node.
      * If multiple tree nodes are selected, expands the most recently selected tree node.
      */
-    expandNode(node?: Readonly<ExpandableTreeNode>): Promise<boolean>;
+    expandNode(node?: Readonly<ExpandableTreeNode>): Promise<Readonly<ExpandableTreeNode> | undefined>;
 
     /**
      * Collapses the given node. If the `node` argument is `undefined`, then collapses the currently selected tree node.
@@ -157,11 +157,7 @@ export class TreeModelImpl implements TreeModel, SelectionProvider<ReadonlyArray
         this.toDispose.push(this.expansionService);
         this.toDispose.push(this.expansionService.onExpansionChanged(node => {
             this.fireChanged();
-            if (!node.expanded && [...this.selectedNodes].some(selectedNode => CompositeTreeNode.isAncestor(node, selectedNode))) {
-                if (SelectableTreeNode.isVisible(node)) {
-                    this.selectNode(node);
-                }
-            }
+            this.handleExpansion(node);
         }));
 
         this.toDispose.push(this.onOpenNodeEmitter);
@@ -171,6 +167,21 @@ export class TreeModelImpl implements TreeModel, SelectionProvider<ReadonlyArray
 
     dispose(): void {
         this.toDispose.dispose();
+    }
+
+    protected handleExpansion(node: Readonly<ExpandableTreeNode>): void {
+        this.selectIfAncestorOfSelected(node);
+    }
+
+    /**
+     * Select the given node if it is the ancestor of a selected node.
+     */
+    protected selectIfAncestorOfSelected(node: Readonly<ExpandableTreeNode>): void {
+        if (!node.expanded && [...this.selectedNodes].some(selectedNode => CompositeTreeNode.isAncestor(node, selectedNode))) {
+            if (SelectableTreeNode.isVisible(node)) {
+                this.selectNode(node);
+            }
+        }
     }
 
     get root(): TreeNode | undefined {
@@ -205,12 +216,11 @@ export class TreeModelImpl implements TreeModel, SelectionProvider<ReadonlyArray
         return this.tree.validateNode(node);
     }
 
-    async refresh(parent?: Readonly<CompositeTreeNode>): Promise<void> {
+    async refresh(parent?: Readonly<CompositeTreeNode>): Promise<CompositeTreeNode | undefined> {
         if (parent) {
-            await this.tree.refresh(parent);
-        } else {
-            await this.tree.refresh();
+            return this.tree.refresh(parent);
         }
+        return this.tree.refresh();
     }
 
     // tslint:disable-next-line:typedef
@@ -227,19 +237,19 @@ export class TreeModelImpl implements TreeModel, SelectionProvider<ReadonlyArray
         return this.expansionService.onExpansionChanged;
     }
 
-    async expandNode(raw?: Readonly<ExpandableTreeNode>): Promise<boolean> {
+    async expandNode(raw?: Readonly<ExpandableTreeNode>): Promise<ExpandableTreeNode | undefined> {
         for (const node of raw ? [raw] : this.selectedNodes) {
             if (ExpandableTreeNode.is(node)) {
-                return await this.expansionService.expandNode(node);
+                return this.expansionService.expandNode(node);
             }
         }
-        return false;
+        return undefined;
     }
 
     async collapseNode(raw?: Readonly<ExpandableTreeNode>): Promise<boolean> {
         for (const node of raw ? [raw] : this.selectedNodes) {
             if (ExpandableTreeNode.is(node)) {
-                return await this.expansionService.collapseNode(node);
+                return this.expansionService.collapseNode(node);
             }
         }
         return false;
@@ -251,7 +261,7 @@ export class TreeModelImpl implements TreeModel, SelectionProvider<ReadonlyArray
             this.selectNode(node);
         }
         if (CompositeTreeNode.is(node)) {
-            return await this.expansionService.collapseAll(node);
+            return this.expansionService.collapseAll(node);
         }
         return false;
     }

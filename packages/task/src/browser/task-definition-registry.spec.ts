@@ -22,17 +22,36 @@ describe('TaskDefinitionRegistry', () => {
     let registry: TaskDefinitionRegistry;
     const definitonContributionA = {
         taskType: 'extA',
+        source: 'extA',
         required: ['extensionType'],
         properties: {
             required: ['extensionType'],
-            all: ['extensionType', 'taskLabel']
+            all: ['extensionType', 'taskLabel'],
+            schema: {
+                type: 'extA',
+                required: ['extensionType'],
+                properties: {
+                    extensionType: {},
+                    taskLabel: {}
+                }
+            }
         }
     };
     const definitonContributionB = {
         taskType: 'extA',
+        source: 'extA',
         properties: {
             required: ['extensionType', 'taskLabel', 'taskDetailedLabel'],
-            all: ['extensionType', 'taskLabel', 'taskDetailedLabel']
+            all: ['extensionType', 'taskLabel', 'taskDetailedLabel'],
+            schema: {
+                type: 'extA',
+                required: ['extensionType', 'taskLabel', 'taskDetailedLabel'],
+                properties: {
+                    extensionType: {},
+                    taskLabel: {},
+                    taskDetailedLabel: {}
+                }
+            }
         }
     };
 

@@ -36,19 +36,14 @@ export class DefaultWindowService implements WindowService, FrontendApplicationC
         this.frontendApplication = app;
         window.addEventListener('beforeunload', event => {
             if (!this.canUnload()) {
-                event.returnValue = '';
-                event.preventDefault();
-                return '';
+                return this.preventUnload(event);
             }
         });
     }
 
-    openNewWindow(url: string): Window | undefined {
-        const newWindow = window.open(url);
-        if (newWindow === null) {
-            throw new Error('Cannot open a new window for URL: ' + url);
-        }
-        return newWindow;
+    openNewWindow(url: string): undefined {
+        window.open(url, undefined, 'noopener');
+        return undefined;
     }
 
     canUnload(): boolean {
@@ -64,6 +59,16 @@ export class DefaultWindowService implements WindowService, FrontendApplicationC
             }
         }
         return confirmExit !== 'always';
+    }
+
+    /**
+     * Ask the user to confirm if they want to unload the window. Prevent it if they do not.
+     * @param event The beforeunload event
+     */
+    protected preventUnload(event: BeforeUnloadEvent): string | void {
+        event.returnValue = '';
+        event.preventDefault();
+        return '';
     }
 
 }

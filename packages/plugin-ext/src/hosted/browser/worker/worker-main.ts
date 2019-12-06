@@ -19,7 +19,7 @@ import { RPCProtocolImpl } from '../../../common/rpc-protocol';
 import { PluginManagerExtImpl } from '../../../plugin/plugin-manager';
 import { MAIN_RPC_CONTEXT, Plugin, emptyPlugin } from '../../../common/plugin-api-rpc';
 import { createAPIFactory } from '../../../plugin/plugin-context';
-import { getPluginId, PluginMetadata } from '../../../common/plugin-protocol';
+import { getPluginId, PluginMetadata, PluginPackage } from '../../../common/plugin-protocol';
 import * as theia from '@theia/plugin';
 import { PreferenceRegistryExtImpl } from '../../../plugin/preference-registry';
 import { ExtPluginApi } from '../../../common/plugin-ext-api-contribution';
@@ -28,6 +28,9 @@ import { EditorsAndDocumentsExtImpl } from '../../../plugin/editors-and-document
 import { WorkspaceExtImpl } from '../../../plugin/workspace';
 import { MessageRegistryExt } from '../../../plugin/message-registry';
 import { WorkerEnvExtImpl } from './worker-env-ext';
+import { ClipboardExt } from '../../../plugin/clipboard-ext';
+import { KeyValueStorageProxy } from '../../../plugin/plugin-storage';
+import { WebviewsExtImpl } from '../../../plugin/webviews';
 
 // tslint:disable-next-line:no-any
 const ctx = self as any;
@@ -50,11 +53,14 @@ function initialize(contextPath: string, pluginMetadata: PluginMetadata): void {
     ctx.importScripts('/context/' + contextPath);
 }
 const envExt = new WorkerEnvExtImpl(rpc);
+const storageProxy = new KeyValueStorageProxy(rpc);
 const editorsAndDocuments = new EditorsAndDocumentsExtImpl(rpc);
 const messageRegistryExt = new MessageRegistryExt(rpc);
 const workspaceExt = new WorkspaceExtImpl(rpc, editorsAndDocuments, messageRegistryExt);
 const preferenceRegistryExt = new PreferenceRegistryExtImpl(rpc, workspaceExt);
 const debugExt = createDebugExtStub(rpc);
+const clipboardExt = new ClipboardExt(rpc);
+const webviewExt = new WebviewsExtImpl(rpc, workspaceExt);
 
 const pluginManager = new PluginManagerExtImpl({
     // tslint:disable-next-line:no-any
@@ -88,10 +94,12 @@ const pluginManager = new PluginManagerExtImpl({
                 }
                 const plugin: Plugin = {
                     pluginPath: pluginModel.entryPoint.frontend!,
-                    pluginFolder: plg.source.packagePath,
+                    pluginFolder: pluginModel.packagePath,
                     model: pluginModel,
                     lifecycle: pluginLifecycle,
-                    rawModel: plg.source
+                    get rawModel(): PluginPackage {
+                        throw new Error('not supported');
+                    }
                 };
                 result.push(plugin);
                 const apiImpl = apiFactory(plugin);
@@ -100,10 +108,12 @@ const pluginManager = new PluginManagerExtImpl({
             } else {
                 foreign.push({
                     pluginPath: pluginModel.entryPoint.backend!,
-                    pluginFolder: plg.source.packagePath,
+                    pluginFolder: pluginModel.packagePath,
                     model: pluginModel,
                     lifecycle: pluginLifecycle,
-                    rawModel: plg.source
+                    get rawModel(): PluginPackage {
+                        throw new Error('not supported');
+                    }
                 });
             }
         }
@@ -123,7 +133,7 @@ const pluginManager = new PluginManagerExtImpl({
             }
         }
     }
-}, envExt, preferenceRegistryExt, rpc);
+}, envExt, storageProxy, preferenceRegistryExt, webviewExt, rpc);
 
 const apiFactory = createAPIFactory(
     rpc,
@@ -133,7 +143,9 @@ const apiFactory = createAPIFactory(
     preferenceRegistryExt,
     editorsAndDocuments,
     workspaceExt,
-    messageRegistryExt
+    messageRegistryExt,
+    clipboardExt,
+    webviewExt
 );
 let defaultApi: typeof theia;
 
@@ -160,6 +172,7 @@ rpc.set(MAIN_RPC_CONTEXT.HOSTED_PLUGIN_MANAGER_EXT, pluginManager);
 rpc.set(MAIN_RPC_CONTEXT.EDITORS_AND_DOCUMENTS_EXT, editorsAndDocuments);
 rpc.set(MAIN_RPC_CONTEXT.WORKSPACE_EXT, workspaceExt);
 rpc.set(MAIN_RPC_CONTEXT.PREFERENCE_REGISTRY_EXT, preferenceRegistryExt);
+rpc.set(MAIN_RPC_CONTEXT.WEBVIEWS_EXT, webviewExt);
 
 function isElectron(): boolean {
     if (typeof navigator === 'object' && typeof navigator.userAgent === 'string' && navigator.userAgent.indexOf('Electron') >= 0) {

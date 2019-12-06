@@ -19,7 +19,7 @@
 import * as theia from '@theia/plugin';
 import { BackendInitializationFn, PluginAPIFactory, Plugin, emptyPlugin } from '@theia/plugin-ext';
 
-export const VSCODE_DEFAULT_API_VERSION = '1.33.1';
+export const VSCODE_DEFAULT_API_VERSION = '1.38.0';
 
 /** Set up en as a default locale for VS Code extensions using vscode-nls */
 process.env['VSCODE_NLS_CONFIG'] = JSON.stringify({ locale: 'en', availableLanguages: {} });
@@ -31,15 +31,21 @@ let defaultApi: typeof theia;
 let isLoadOverride = false;
 let pluginApiFactory: PluginAPIFactory;
 
+export enum ExtensionKind {
+    UI = 1,
+    Workspace = 2
+}
+
 export const doInitialization: BackendInitializationFn = (apiFactory: PluginAPIFactory, plugin: Plugin) => {
-    const vscode = apiFactory(plugin);
+    const vscode = Object.assign(apiFactory(plugin), { ExtensionKind });
 
     // replace command API as it will send only the ID as a string parameter
     const registerCommand = vscode.commands.registerCommand;
     vscode.commands.registerCommand = function (command: theia.CommandDescription | string, handler?: <T>(...args: any[]) => T | Thenable<T>, thisArg?: any): any {
         // use of the ID when registering commands
         if (typeof command === 'string') {
-            const commands = plugin.model.contributes && plugin.model.contributes.commands;
+            const rawCommands = plugin.rawModel.contributes && plugin.rawModel.contributes.commands;
+            const commands = rawCommands ? Array.isArray(rawCommands) ? rawCommands : [rawCommands] : undefined;
             if (handler && commands && commands.some(item => item.command === command)) {
                 return vscode.commands.registerHandler(command, handler, thisArg);
             }
@@ -48,40 +54,13 @@ export const doInitialization: BackendInitializationFn = (apiFactory: PluginAPIF
         return registerCommand(command, handler, thisArg);
     };
 
-    // replace createWebviewPanel API for override html setter
-    const createWebviewPanel = vscode.window.createWebviewPanel;
-    vscode.window.createWebviewPanel = function (viewType: string, title: string, showOptions: any, options: any | undefined): any {
-        const panel = createWebviewPanel(viewType, title, showOptions, options);
-        // redefine property
-        Object.defineProperty(panel.webview, 'html', {
-            set: function (html: string): void {
-                const newHtml = html.replace(new RegExp('vscode-resource:/', 'g'), 'webview/');
-                this.checkIsDisposed();
-                if (this._html !== newHtml) {
-                    this._html = newHtml;
-                    this.proxy.$setHtml(this.viewId, newHtml);
-                }
-            }
-        });
-
-        // override postMessage method to replace vscode-resource:
-        const originalPostMessage = panel.webview.postMessage;
-        panel.webview.postMessage = (message: any): PromiseLike<boolean> => {
-            const decoded = JSON.stringify(message);
-            const newMessage = decoded.replace(new RegExp('vscode-resource:/', 'g'), 'webview/');
-            return originalPostMessage.call(panel.webview, JSON.parse(newMessage));
-        };
-
-        return panel;
-    };
-
     // use Theia plugin api instead vscode extensions
     (<any>vscode).extensions = {
         get all(): any[] {
-            return vscode.plugins.all.map(p => withExtensionPath(p));
+            return vscode.plugins.all.map(p => asExtension(p));
         },
         getExtension(pluginId: string): any | undefined {
-            return withExtensionPath(vscode.plugins.getPlugin(pluginId));
+            return asExtension(vscode.plugins.getPlugin(pluginId));
         },
         get onDidChange(): theia.Event<void> {
             return vscode.plugins.onDidChange;
@@ -133,10 +112,14 @@ function findPlugin(filePath: string): Plugin | undefined {
     return plugins.find(plugin => filePath.startsWith(plugin.pluginFolder));
 }
 
-function withExtensionPath(plugin: any | undefined): any | undefined {
-    if (plugin && plugin.pluginPath) {
+function asExtension(plugin: any | undefined): any | undefined {
+    if (!plugin) {
+        return plugin;
+    }
+    if (plugin.pluginPath) {
         plugin.extensionPath = plugin.pluginPath;
     }
-
+    // stub as a local VS Code extension (not running on a remote workspace)
+    plugin.extensionKind = ExtensionKind.UI;
     return plugin;
 }

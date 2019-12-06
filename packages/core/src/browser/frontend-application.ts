@@ -20,7 +20,7 @@ import { MaybePromise } from '../common/types';
 import { KeybindingRegistry } from './keybinding';
 import { Widget } from './widgets';
 import { ApplicationShell } from './shell/application-shell';
-import { ShellLayoutRestorer } from './shell/shell-layout-restorer';
+import { ShellLayoutRestorer, ApplicationShellLayoutMigrationError } from './shell/shell-layout-restorer';
 import { FrontendApplicationStateService } from './frontend-application-state';
 import { preventNavigation, parseCssTime } from './browser';
 import { CorePreferences } from './core-preferences';
@@ -58,7 +58,7 @@ export interface FrontendApplicationContribution {
     /**
      * Called when an application is stopped or unloaded.
      *
-     * Note that this is implemented using `window.unload` which doesn't allow any asynchronous code anymore.
+     * Note that this is implemented using `window.beforeunload` which doesn't allow any asynchronous code anymore.
      * I.e. this is the last tick.
      */
     onStop?(app: FrontendApplication): void;
@@ -70,7 +70,7 @@ export interface FrontendApplicationContribution {
     initializeLayout?(app: FrontendApplication): MaybePromise<void>;
 
     /**
-     * An event is emmited when a layout is initialized, but before the shell is attached.
+     * An event is emitted when a layout is initialized, but before the shell is attached.
      */
     onDidInitializeLayout?(app: FrontendApplication): MaybePromise<void>;
 }
@@ -157,22 +157,55 @@ export class FrontendApplication {
         return startupElements.length === 0 ? undefined : startupElements[0] as HTMLElement;
     }
 
+    /* vvv HOTFIX begin vvv
+     *
+     * This is a hotfix against issues eclipse/theia#6459 and gitpod-io/gitpod#875 .
+     * It should be reverted after Theia was updated to the newer Monaco.
+     */
+    protected inComposition = false;
+    /**
+     * Register composition related event listeners.
+     */
+    protected registerComositionEventListeners(): void {
+        window.document.addEventListener('compositionstart', event => {
+            this.inComposition = true;
+        });
+        window.document.addEventListener('compositionend', event => {
+            this.inComposition = false;
+        });
+    }
+    /* ^^^ HOTFIX end ^^^ */
+
     /**
      * Register global event listeners.
      */
     protected registerEventListeners(): void {
-        window.addEventListener('unload', () => {
+        this.registerComositionEventListeners(); /* Hotfix. See above. */
+
+        window.addEventListener('beforeunload', () => {
             this.stateService.state = 'closing_window';
             this.layoutRestorer.storeLayout(this);
             this.stopContributions();
         });
         window.addEventListener('resize', () => this.shell.update());
-        document.addEventListener('keydown', event => this.keybindings.run(event), true);
+        document.addEventListener('keydown', event => {
+            if (this.inComposition !== true) {
+                this.keybindings.run(event);
+            }
+        }, true);
         document.addEventListener('touchmove', event => { event.preventDefault(); }, { passive: false });
         // Prevent forward/back navigation by scrolling in OS X
         if (isOSX) {
             document.body.addEventListener('wheel', preventNavigation, { passive: false });
         }
+        // Prevent the default browser behavior when dragging and dropping files into the window.
+        window.addEventListener('dragover', event => {
+            event.preventDefault();
+        }, false);
+        window.addEventListener('drop', event => {
+            event.preventDefault();
+        }, false);
+
     }
 
     /**
@@ -229,7 +262,12 @@ export class FrontendApplication {
         try {
             return await this.layoutRestorer.restoreLayout(this);
         } catch (error) {
-            this.logger.error('Could not restore layout', error);
+            if (ApplicationShellLayoutMigrationError.is(error)) {
+                console.warn(error.message);
+                console.info('Initializing the default layout instead...');
+            } else {
+                console.error('Could not restore layout', error);
+            }
             return false;
         }
     }
@@ -307,6 +345,7 @@ export class FrontendApplication {
      * Stop the frontend application contributions. This is called when the window is unloaded.
      */
     protected stopContributions(): void {
+        this.logger.info('>>> Stopping contributions....');
         for (const contribution of this.contributions.getContributions()) {
             if (contribution.onStop) {
                 try {
@@ -316,6 +355,7 @@ export class FrontendApplication {
                 }
             }
         }
+        this.logger.info('<<< All contributions have been stopped.');
     }
 
     protected async measure<T>(name: string, fn: () => MaybePromise<T>): Promise<T> {

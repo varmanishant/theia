@@ -142,8 +142,12 @@ export class WorkspaceFrontendContribution implements CommandContribution, Keybi
 
     registerKeybindings(keybindings: KeybindingRegistry): void {
         keybindings.registerKeybinding({
+            command: WorkspaceCommands.NEW_FILE.id,
+            keybinding: this.isElectron() ? 'ctrlcmd+n' : 'alt+n',
+        });
+        keybindings.registerKeybinding({
             command: isOSX || !this.isElectron() ? WorkspaceCommands.OPEN.id : WorkspaceCommands.OPEN_FILE.id,
-            keybinding: 'ctrlcmd+alt+o',
+            keybinding: this.isElectron() ? 'ctrlcmd+o' : 'ctrlcmd+alt+o',
         });
         if (!isOSX && this.isElectron()) {
             keybindings.registerKeybinding({
@@ -161,7 +165,7 @@ export class WorkspaceFrontendContribution implements CommandContribution, Keybi
         });
         keybindings.registerKeybinding({
             command: WorkspaceCommands.SAVE_AS.id,
-            keybinding: 'ctrl+shift+s',
+            keybinding: 'ctrlcmd+shift+s',
         });
     }
 
@@ -251,7 +255,7 @@ export class WorkspaceFrontendContribution implements CommandContribution, Keybi
      * if it was successful. Otherwise, resolves to `undefined`.
      *
      * **Caveat**: this behaves differently on different platforms, the `workspace.supportMultiRootWorkspace` preference value **does** matter,
-     * and `electron`/`browser` version has impact too. See [here](https://github.com/theia-ide/theia/pull/3202#issuecomment-430884195) for more details.
+     * and `electron`/`browser` version has impact too. See [here](https://github.com/eclipse-theia/theia/pull/3202#issuecomment-430884195) for more details.
      *
      * Legend:
      *  - `workspace.supportMultiRootWorkspace` is `false`: => `N`

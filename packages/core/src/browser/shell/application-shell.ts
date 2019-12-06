@@ -33,6 +33,7 @@ import { SplitPositionHandler, SplitPositionOptions } from './split-panels';
 import { FrontendApplicationStateService } from '../frontend-application-state';
 import { TabBarToolbarRegistry, TabBarToolbarFactory, TabBarToolbar } from './tab-bar-toolbar';
 import { ContextKeyService } from '../context-key-service';
+import { Emitter } from '../../common/event';
 
 /** The class name added to ApplicationShell instances. */
 const APPLICATION_SHELL_CLASS = 'theia-ApplicationShell';
@@ -45,7 +46,16 @@ const MAIN_AREA_CLASS = 'theia-app-main';
 /** The class name added to the bottom area panel. */
 const BOTTOM_AREA_CLASS = 'theia-app-bottom';
 
-const LAYOUT_DATA_VERSION = '3.0';
+export type ApplicationShellLayoutVersion =
+    /** layout versioning is introduced, unversiouned layout are not compatible */
+    2.0 |
+    /** view containers are introduced, backward compatible to 2.0 */
+    3.0;
+
+/**
+ * When a version is increased, make sure to introduce a migration (ApplicationShellLayoutMigration) to this version.
+ */
+export const applicationShellLayoutVersion: ApplicationShellLayoutVersion = 3.0;
 
 export const ApplicationShellOptions = Symbol('ApplicationShellOptions');
 export const DockPanelRendererFactory = Symbol('DockPanelRendererFactory');
@@ -162,6 +172,24 @@ export class ApplicationShell extends Widget {
     @inject(ContextKeyService)
     protected readonly contextKeyService: ContextKeyService;
 
+    protected readonly onDidAddWidgetEmitter = new Emitter<Widget>();
+    readonly onDidAddWidget = this.onDidAddWidgetEmitter.event;
+    protected fireDidAddWidget(widget: Widget): void {
+        this.onDidAddWidgetEmitter.fire(widget);
+    }
+
+    protected readonly onDidRemoveWidgetEmitter = new Emitter<Widget>();
+    readonly onDidRemoveWidget = this.onDidRemoveWidgetEmitter.event;
+    protected fireDidRemoveWidget(widget: Widget): void {
+        this.onDidRemoveWidgetEmitter.fire(widget);
+    }
+
+    protected readonly onDidChangeActiveWidgetEmitter = new Emitter<FocusTracker.IChangedArgs<Widget>>();
+    readonly onDidChangeActiveWidget = this.onDidChangeActiveWidgetEmitter.event;
+
+    protected readonly onDidChangeCurrentWidgetEmitter = new Emitter<FocusTracker.IChangedArgs<Widget>>();
+    readonly onDidChangeCurrentWidget = this.onDidChangeCurrentWidgetEmitter.event;
+
     /**
      * Construct a new application shell.
      */
@@ -196,10 +224,17 @@ export class ApplicationShell extends Widget {
         this.mainPanel = this.createMainPanel();
         this.topPanel = this.createTopPanel();
         this.bottomPanel = this.createBottomPanel();
+
         this.leftPanelHandler = sidePanelHandlerFactory();
         this.leftPanelHandler.create('left', this.options.leftPanel);
+        this.leftPanelHandler.dockPanel.widgetAdded.connect((_, widget) => this.fireDidAddWidget(widget));
+        this.leftPanelHandler.dockPanel.widgetRemoved.connect((_, widget) => this.fireDidRemoveWidget(widget));
+
         this.rightPanelHandler = sidePanelHandlerFactory();
         this.rightPanelHandler.create('right', this.options.rightPanel);
+        this.rightPanelHandler.dockPanel.widgetAdded.connect((_, widget) => this.fireDidAddWidget(widget));
+        this.rightPanelHandler.dockPanel.widgetRemoved.connect((_, widget) => this.fireDidRemoveWidget(widget));
+
         this.layout = this.createLayout();
 
         this.tracker.currentChanged.connect(this.onCurrentChanged, this);
@@ -408,6 +443,8 @@ export class ApplicationShell extends Widget {
             spacing: 0
         });
         dockPanel.id = MAIN_AREA_ID;
+        dockPanel.widgetAdded.connect((_, widget) => this.fireDidAddWidget(widget));
+        dockPanel.widgetRemoved.connect((_, widget) => this.fireDidRemoveWidget(widget));
         return dockPanel;
     }
 
@@ -438,6 +475,8 @@ export class ApplicationShell extends Widget {
             this.mainPanel.overlay.hide(0);
         });
         dockPanel.hide();
+        dockPanel.widgetAdded.connect((_, widget) => this.fireDidAddWidget(widget));
+        dockPanel.widgetRemoved.connect((_, widget) => this.fireDidRemoveWidget(widget));
         return dockPanel;
     }
 
@@ -516,7 +555,7 @@ export class ApplicationShell extends Widget {
      */
     getLayoutData(): ApplicationShell.LayoutData {
         return {
-            version: LAYOUT_DATA_VERSION,
+            version: applicationShellLayoutVersion,
             mainPanel: this.mainPanel.saveLayout(),
             bottomPanel: {
                 config: this.bottomPanel.saveLayout(),
@@ -561,7 +600,7 @@ export class ApplicationShell extends Widget {
      * Apply a shell layout that has been previously created with `getLayoutData`.
      */
     async setLayoutData(layoutData: ApplicationShell.LayoutData): Promise<void> {
-        const { mainPanel, bottomPanel, leftPanel, rightPanel, activeWidgetId } = this.getValidatedLayoutData(layoutData);
+        const { mainPanel, bottomPanel, leftPanel, rightPanel, activeWidgetId } = layoutData;
         if (leftPanel) {
             this.leftPanelHandler.setLayoutData(leftPanel);
             await this.registerWithFocusTracker(leftPanel);
@@ -596,13 +635,6 @@ export class ApplicationShell extends Widget {
         if (activeWidgetId) {
             this.activateWidget(activeWidgetId);
         }
-    }
-
-    protected getValidatedLayoutData(layoutData: ApplicationShell.LayoutData): ApplicationShell.LayoutData {
-        if (layoutData.version !== LAYOUT_DATA_VERSION) {
-            throw new Error(`Saved workbench layout (version ${layoutData.version || 'unknown'}) is incompatible with the current (${LAYOUT_DATA_VERSION})`);
-        }
-        return layoutData;
     }
 
     /**
@@ -794,6 +826,8 @@ export class ApplicationShell extends Widget {
 
     /**
      * A signal emitted whenever the `currentWidget` property is changed.
+     *
+     * @deprecated since 0.11.0, use `onDidChangeActiveWidget` instead
      */
     readonly currentChanged = new Signal<this, FocusTracker.IChangedArgs<Widget>>(this);
 
@@ -802,10 +836,13 @@ export class ApplicationShell extends Widget {
      */
     private onCurrentChanged(sender: FocusTracker<Widget>, args: FocusTracker.IChangedArgs<Widget>): void {
         this.currentChanged.emit(args);
+        this.onDidChangeCurrentWidgetEmitter.fire(args);
     }
 
     /**
      * A signal emitted whenever the `activeWidget` property is changed.
+     *
+     * @deprecated since 0.11.0, use `onDidChangeActiveWidget` instead
      */
     readonly activeChanged = new Signal<this, FocusTracker.IChangedArgs<Widget>>(this);
 
@@ -848,6 +885,7 @@ export class ApplicationShell extends Widget {
             this.setZIndex(newValue.node, '1');
         }
         this.activeChanged.emit(args);
+        this.onDidChangeActiveWidgetEmitter.fire(args);
     }
 
     /**
@@ -967,6 +1005,11 @@ export class ApplicationShell extends Widget {
     private readonly toDisposeOnActivationCheck = new DisposableCollection();
     private assertActivated(widget: Widget): void {
         this.toDisposeOnActivationCheck.dispose();
+
+        const onDispose = () => this.toDisposeOnActivationCheck.dispose();
+        widget.disposed.connect(onDispose);
+        this.toDisposeOnActivationCheck.push(Disposable.create(() => widget.disposed.disconnect(onDispose)));
+
         let start = 0;
         const step: FrameRequestCallback = timestamp => {
             if (document.activeElement && widget.node.contains(document.activeElement)) {
@@ -1585,7 +1628,7 @@ export namespace ApplicationShell {
      * Data to save and load the application shell layout.
      */
     export interface LayoutData {
-        version?: string,
+        version?: string | ApplicationShellLayoutVersion,
         mainPanel?: DockPanel.ILayoutConfig;
         bottomPanel?: BottomPanelLayoutData;
         leftPanel?: SidePanel.LayoutData;
@@ -1625,4 +1668,5 @@ export namespace ApplicationShell {
             return !!widget && 'getTrackableWidgets' in widget;
         }
     }
+
 }

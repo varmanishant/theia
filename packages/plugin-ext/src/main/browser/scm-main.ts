@@ -27,31 +27,62 @@ import { ScmRepository } from '@theia/scm/lib/browser/scm-repository';
 import { ScmService } from '@theia/scm/lib/browser/scm-service';
 import { RPCProtocol } from '../../common/rpc-protocol';
 import { interfaces } from 'inversify';
-import { CancellationToken, DisposableCollection, Emitter, Event } from '@theia/core';
+import { Emitter, Event } from '@theia/core/lib/common/event';
+import { CancellationToken } from '@theia/core/lib/common/cancellation';
+import { Disposable, DisposableCollection } from '@theia/core/lib/common/disposable';
 import URI from '@theia/core/lib/common/uri';
 import { LabelProvider } from '@theia/core/lib/browser';
 import { ScmNavigatorDecorator } from '@theia/scm/lib/browser/decorations/scm-navigator-decorator';
 
-export class ScmMainImpl implements ScmMain {
+export class ScmMainImpl implements ScmMain, Disposable {
     private readonly proxy: ScmExt;
     private readonly scmService: ScmService;
-    private readonly scmRepositoryMap: Map<number, ScmRepository>;
+    private readonly scmRepositoryMap = new Map<number, ScmRepository>();
     private readonly labelProvider: LabelProvider;
+    private lastSelectedSourceControlHandle: number | undefined;
+
+    private readonly toDispose = new DisposableCollection();
 
     constructor(rpc: RPCProtocol, container: interfaces.Container) {
         this.proxy = rpc.getProxy(MAIN_RPC_CONTEXT.SCM_EXT);
         this.scmService = container.get(ScmService);
-        this.scmRepositoryMap = new Map();
         this.labelProvider = container.get(LabelProvider);
+        this.toDispose.push(this.scmService.onDidChangeSelectedRepository(repository => this.updateSelectedRepository(repository)));
+    }
+
+    dispose(): void {
+        this.toDispose.dispose();
+    }
+
+    protected updateSelectedRepository(repository: ScmRepository | undefined): void {
+        const sourceControlHandle = repository ? this.getSourceControlHandle(repository) : undefined;
+        if (sourceControlHandle !== undefined) {
+            this.proxy.$setSourceControlSelection(sourceControlHandle, true);
+        }
+        if (this.lastSelectedSourceControlHandle !== undefined && this.lastSelectedSourceControlHandle !== sourceControlHandle) {
+            this.proxy.$setSourceControlSelection(this.lastSelectedSourceControlHandle, false);
+        }
+        this.lastSelectedSourceControlHandle = sourceControlHandle;
+    }
+
+    protected getSourceControlHandle(repository: ScmRepository): number | undefined {
+        return Array.from(this.scmRepositoryMap.keys()).find(key => {
+            const scmRepository = this.scmRepositoryMap.get(key);
+            return scmRepository !== undefined && scmRepository.provider.rootUri === repository.provider.rootUri;
+        });
     }
 
     async $registerSourceControl(sourceControlHandle: number, id: string, label: string, rootUri: string): Promise<void> {
-        const provider: ScmProvider = new PluginScmProvider(this.proxy, sourceControlHandle, id, label, rootUri, this.labelProvider);
+        const provider = new PluginScmProvider(this.proxy, sourceControlHandle, id, label, rootUri, this.labelProvider);
         const repository = this.scmService.registerScmProvider(provider);
         repository.input.onDidChange(() =>
             this.proxy.$updateInputBox(sourceControlHandle, repository.input.value)
         );
         this.scmRepositoryMap.set(sourceControlHandle, repository);
+        if (this.scmService.repositories.length === 1) {
+            this.updateSelectedRepository(repository);
+        }
+        this.toDispose.push(Disposable.create(() => this.$unregisterSourceControl(sourceControlHandle)));
     }
 
     async $updateSourceControl(sourceControlHandle: number, features: SourceControlProviderFeatures): Promise<void> {
@@ -158,11 +189,23 @@ export class PluginScmProvider implements ScmProvider {
     }
 
     get acceptInputCommand(): ScmCommand | undefined {
-        return this.features.acceptInputCommand;
+        const command = this.features.acceptInputCommand;
+        if (command) {
+            const scmCommand: ScmCommand = command;
+            scmCommand.command = command.id;
+            return command;
+        }
     }
 
     get statusBarCommands(): ScmCommand[] | undefined {
-        return this.features.statusBarCommands;
+        const commands = this.features.statusBarCommands;
+        if (commands) {
+            return commands.map(command => {
+                const scmCommand: ScmCommand = command;
+                scmCommand.command = command.id;
+                return scmCommand;
+            });
+        }
     }
 
     get count(): number | undefined {

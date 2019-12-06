@@ -159,4 +159,5 @@ export class MonacoTextmateService implements FrontendApplicationContribution {
             this.onDidActivateLanguageEmitter.fire(languageId);
         }
     }
+
 }

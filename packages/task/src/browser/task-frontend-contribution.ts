@@ -28,6 +28,8 @@ import { TaskService } from './task-service';
 import { TerminalMenus } from '@theia/terminal/lib/browser/terminal-frontend-contribution';
 import { TaskSchemaUpdater } from './task-schema-updater';
 import { TaskConfiguration, TaskWatcher } from '../common';
+import { EditorManager } from '@theia/editor/lib/browser';
+import { WorkspaceService } from '@theia/workspace/lib/browser/workspace-service';
 
 export namespace TaskCommands {
     const TASK_CATEGORY = 'Task';
@@ -35,6 +37,23 @@ export namespace TaskCommands {
         id: 'task:run',
         category: TASK_CATEGORY,
         label: 'Run Task...'
+    };
+
+    export const TASK_RUN_BUILD: Command = {
+        id: 'task:run:build',
+        category: TASK_CATEGORY,
+        label: 'Run Build Task...'
+    };
+
+    export const TASK_RUN_TEST: Command = {
+        id: 'task:run:test',
+        category: TASK_CATEGORY,
+        label: 'Run Test Task...'
+    };
+
+    export const WORKBENCH_RUN_TASK: Command = {
+        id: 'workbench.action.tasks.runTask',
+        category: TASK_CATEGORY
     };
 
     export const TASK_RUN_LAST: Command = {
@@ -87,6 +106,9 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
     @inject(QuickOpenTask)
     protected readonly quickOpenTask: QuickOpenTask;
 
+    @inject(EditorManager)
+    protected readonly editorManager: EditorManager;
+
     @inject(FrontendApplication)
     protected readonly app: FrontendApplication;
 
@@ -125,6 +147,9 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
 
     @inject(StatusBar)
     protected readonly statusBar: StatusBar;
+
+    @inject(WorkspaceService)
+    protected readonly workspaceService: WorkspaceService;
 
     @postConstruct()
     protected async init(): Promise<void> {
@@ -174,6 +199,19 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
 
     registerCommands(registry: CommandRegistry): void {
         registry.registerCommand(
+            TaskCommands.WORKBENCH_RUN_TASK,
+            {
+                isEnabled: () => true,
+                execute: async (label: string) => {
+                    const didExecute = await this.taskService.runTaskByLabel(label);
+                    if (!didExecute) {
+                        this.quickOpenTask.open();
+                    }
+                }
+            }
+        );
+
+        registry.registerCommand(
             TaskCommands.TASK_RUN,
             {
                 isEnabled: () => true,
@@ -185,6 +223,24 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
                     }
                     return this.quickOpenTask.open();
                 }
+            }
+        );
+        registry.registerCommand(
+            TaskCommands.TASK_RUN_BUILD,
+            {
+                isEnabled: () => this.workspaceService.opened,
+                // tslint:disable-next-line:no-any
+                execute: (...args: any[]) =>
+                    this.quickOpenTask.runBuildOrTestTask('build')
+            }
+        );
+        registry.registerCommand(
+            TaskCommands.TASK_RUN_TEST,
+            {
+                isEnabled: () => this.workspaceService.opened,
+                // tslint:disable-next-line:no-any
+                execute: (...args: any[]) =>
+                    this.quickOpenTask.runBuildOrTestTask('test')
             }
         );
         registry.registerCommand(
@@ -204,7 +260,8 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
         registry.registerCommand(
             TaskCommands.TASK_RUN_TEXT,
             {
-                isEnabled: () => true,
+                isVisible: () => !!this.editorManager.currentEditor,
+                isEnabled: () => !!this.editorManager.currentEditor,
                 execute: () => this.taskService.runSelectedText()
             }
         );
@@ -245,18 +302,28 @@ export class TaskFrontendContribution implements CommandContribution, MenuContri
         });
 
         menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS, {
-            commandId: TaskCommands.TASK_RUN_LAST.id,
+            commandId: TaskCommands.TASK_RUN_BUILD.id,
             order: '1'
         });
 
         menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS, {
-            commandId: TaskCommands.TASK_ATTACH.id,
+            commandId: TaskCommands.TASK_RUN_TEST.id,
             order: '2'
         });
 
         menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS, {
-            commandId: TaskCommands.TASK_RUN_TEXT.id,
+            commandId: TaskCommands.TASK_RUN_LAST.id,
             order: '3'
+        });
+
+        menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS, {
+            commandId: TaskCommands.TASK_ATTACH.id,
+            order: '4'
+        });
+
+        menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS, {
+            commandId: TaskCommands.TASK_RUN_TEXT.id,
+            order: '5'
         });
 
         menus.registerMenuAction(TerminalMenus.TERMINAL_TASKS_INFO, {

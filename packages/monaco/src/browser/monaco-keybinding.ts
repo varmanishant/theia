@@ -20,8 +20,7 @@ import { EditorKeybindingContexts } from '@theia/editor/lib/browser';
 import { MonacoCommands } from './monaco-command';
 import { MonacoCommandRegistry } from './monaco-command-registry';
 import { KEY_CODE_MAP } from './monaco-keycode-map';
-import KeybindingsRegistry = monaco.keybindings.KeybindingsRegistry;
-import { isOSX } from '@theia/core';
+import { isOSX, environment } from '@theia/core';
 
 function monaco2BrowserKeyCode(keyCode: monaco.KeyCode): number {
     for (let i = 0; i < KEY_CODE_MAP.length; i++) {
@@ -39,18 +38,24 @@ export class MonacoKeybindingContribution implements KeybindingContribution {
     protected readonly commands: MonacoCommandRegistry;
 
     registerKeybindings(registry: KeybindingRegistry): void {
-        for (const item of KeybindingsRegistry.getDefaultKeybindings()) {
+        const defaultKeybindings = monaco.keybindings.KeybindingsRegistry.getDefaultKeybindings();
+        // register in reverse order to align with Monaco dispatch logic:
+        // https://github.com/TypeFox/vscode/blob/70b8db24a37fafc77247de7f7cb5bb0195120ed0/src/vs/platform/keybinding/common/keybindingResolver.ts#L302
+        for (let i = defaultKeybindings.length - 1; i >= 0; i--) {
+            const item = defaultKeybindings[i];
             const command = this.commands.validate(item.command);
             if (command) {
                 const raw = item.keybinding;
-                const keybinding = raw.type === monaco.keybindings.KeybindingType.Simple
-                    ? this.keyCode(raw as monaco.keybindings.SimpleKeybinding).toString()
-                    : this.keySequence(raw as monaco.keybindings.ChordKeybinding).join(' ');
-                const isInDiffEditor = item.when && /(^|[^!])\bisInDiffEditor\b/gm.test(item.when.serialize());
-                const context = isInDiffEditor
-                    ? EditorKeybindingContexts.diffEditorTextFocus
-                    : EditorKeybindingContexts.strictEditorTextFocus;
-                registry.registerKeybinding({ command, keybinding, context });
+                const when = item.when && item.when.serialize();
+                let keybinding;
+                if (item.command === MonacoCommands.GO_TO_DEFINITION && !environment.electron.is()) {
+                    keybinding = 'ctrlcmd+f11';
+                } else {
+                    keybinding = raw instanceof monaco.keybindings.SimpleKeybinding
+                        ? this.keyCode(raw).toString()
+                        : this.keySequence(raw as monaco.keybindings.ChordKeybinding).join(' ');
+                }
+                registry.registerKeybinding({ command, keybinding, when });
             }
         }
 
@@ -91,9 +96,6 @@ export class MonacoKeybindingContribution implements KeybindingContribution {
     }
 
     protected keySequence(keybinding: monaco.keybindings.ChordKeybinding): KeySequence {
-        return [
-            this.keyCode(keybinding.firstPart),
-            this.keyCode(keybinding.chordPart)
-        ];
+        return keybinding.parts.map(part => this.keyCode(part));
     }
 }

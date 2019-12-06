@@ -37,7 +37,9 @@ import { MenuPath, MenuModelRegistry, ActionMenuNode } from '@theia/core/lib/com
 import * as React from 'react';
 import { PluginSharedStyle } from '../plugin-shared-style';
 import { ViewContextKeyService } from './view-context-key-service';
+import { Widget } from '@theia/core/lib/browser/widgets/widget';
 import { CommandRegistry } from '@theia/core/lib/common/command';
+import { Emitter } from '@theia/core/lib/common/event';
 import { MessageService } from '@theia/core/lib/common/message-service';
 import { View } from '../../../common/plugin-protocol';
 
@@ -88,7 +90,7 @@ export class PluginTree extends TreeImpl {
     private _proxy: TreeViewsExt | undefined;
     private _viewInfo: View | undefined;
 
-    set proxy(proxy: TreeViewsExt) {
+    set proxy(proxy: TreeViewsExt | undefined) {
         this._proxy = proxy;
     }
 
@@ -123,11 +125,12 @@ export class PluginTree extends TreeImpl {
         const update = {
             name: item.label,
             icon,
-            description: item.tooltip,
+            description: item.description,
+            tooltip: item.tooltip,
             contextValue: item.contextValue
         };
         const node = this.getNode(item.id);
-        if (item.collapsibleState !== TreeViewItemCollapsibleState.None) {
+        if (item.collapsibleState !== undefined && item.collapsibleState !== TreeViewItemCollapsibleState.None) {
             if (CompositeTreeViewNode.is(node)) {
                 return Object.assign(node, update);
             }
@@ -141,13 +144,14 @@ export class PluginTree extends TreeImpl {
             }, update);
         }
         if (TreeViewNode.is(node)) {
-            return Object.assign(node, update);
+            return Object.assign(node, update, { command: item.command });
         }
         return Object.assign({
             id: item.id,
             parent,
             visible: true,
-            selected: false
+            selected: false,
+            command: item.command
         }, update);
     }
 
@@ -156,7 +160,9 @@ export class PluginTree extends TreeImpl {
             return 'fa ' + item.icon;
         }
         if (item.iconUrl) {
-            return this.sharedStyle.toIconClass(item.iconUrl);
+            const reference = this.sharedStyle.toIconClass(item.iconUrl);
+            this.toDispose.push(reference);
+            return reference.object.iconClass;
         }
         if (item.themeIconId) {
             return item.themeIconId === 'folder' ? FOLDER_ICON : FILE_ICON;
@@ -175,7 +181,7 @@ export class PluginTreeModel extends TreeModelImpl {
     @inject(PluginTree)
     protected readonly tree: PluginTree;
 
-    set proxy(proxy: TreeViewsExt) {
+    set proxy(proxy: TreeViewsExt | undefined) {
         this.tree.proxy = proxy;
     }
 
@@ -205,12 +211,16 @@ export class TreeViewWidget extends TreeWidget {
     @inject(PluginTreeModel)
     readonly model: PluginTreeModel;
 
+    protected readonly onDidChangeVisibilityEmitter = new Emitter<boolean>();
+    readonly onDidChangeVisibility = this.onDidChangeVisibilityEmitter.event;
+
     @postConstruct()
     protected init(): void {
         super.init();
         this.id = this.identifier.id;
         this.addClass('theia-tree-view');
         this.node.style.height = '100%';
+        this.toDispose.push(this.onDidChangeVisibilityEmitter);
     }
 
     protected renderIcon(node: TreeNode, props: NodeProps): React.ReactNode {
@@ -233,7 +243,7 @@ export class TreeViewWidget extends TreeWidget {
         if (node.description) {
             attrs = {
                 ...attrs,
-                title: node.description
+                title: 'tooltip' in node ? node['tooltip'] : ''
             };
         }
 
@@ -244,10 +254,10 @@ export class TreeViewWidget extends TreeWidget {
     protected getCaption(node: TreeNode): React.ReactNode[] {
         const nodes: React.ReactNode[] = [];
 
-        let work = node.name;
+        let work = node.name || '';
 
         const regex = /\[([^\[]+)\]\(([^\)]+)\)/g;
-        const matchResult = node.name.match(regex);
+        const matchResult = work.match(regex);
 
         if (matchResult) {
             matchResult.forEach(match => {
@@ -265,7 +275,12 @@ export class TreeViewWidget extends TreeWidget {
             });
         }
 
-        nodes.push(work);
+        nodes.push(<div>{work}</div>);
+        if (node.description) {
+            nodes.push(<div className='theia-tree-view-description'>
+                {node.description}
+            </div>);
+        }
         return nodes;
     }
 
@@ -317,4 +332,37 @@ export class TreeViewWidget extends TreeWidget {
         return [this.toTreeViewSelection(node)];
     }
 
+    setFlag(flag: Widget.Flag): void {
+        super.setFlag(flag);
+        if (flag === Widget.Flag.IsVisible) {
+            this.onDidChangeVisibilityEmitter.fire(this.isVisible);
+        }
+    }
+
+    clearFlag(flag: Widget.Flag): void {
+        super.clearFlag(flag);
+        if (flag === Widget.Flag.IsVisible) {
+            this.onDidChangeVisibilityEmitter.fire(this.isVisible);
+        }
+    }
+
+    handleEnter(event: KeyboardEvent): void {
+        super.handleEnter(event);
+        this.tryExecuteCommand();
+    }
+
+    handleClickEvent(node: TreeNode, event: React.MouseEvent<HTMLElement>): void {
+        super.handleClickEvent(node, event);
+        this.tryExecuteCommand(node);
+    }
+
+    // execute TreeItem.command if present
+    protected tryExecuteCommand(node?: TreeNode): void {
+        const treeNodes = (node ? [node] : this.model.selectedNodes) as TreeViewNode[];
+        for (const treeNode of treeNodes) {
+            if (treeNode && treeNode.command) {
+                this.commands.executeCommand(treeNode.command.id, ...(treeNode.command.arguments || []));
+            }
+        }
+    }
 }

@@ -75,6 +75,10 @@
 | Tabs in the center area (main and bottom)
 |----------------------------------------------------------------------------*/
 
+#theia-main-content-panel .p-Widget.p-DockPanel-widget {
+  background-color: var(--theia-layout-color0);
+}
+
 /* This is a current tab of a tab bar: each tab bar has 1. */
 .p-TabBar .p-TabBar-tab.p-mod-current {
   min-height: calc(var(--theia-private-horizontal-tab-height) + var(--theia-border-width));
@@ -90,8 +94,21 @@
 
 .p-TabBar.theia-app-centers .p-TabBar-tabIcon,
 .p-TabBar.theia-app-centers .p-TabBar-tabLabel,
+.p-TabBar.theia-app-centers .p-TabBar-tabLabelDetails,
 .p-TabBar.theia-app-centers .p-TabBar-tabCloseIcon {
   display: inline-block;
+}
+
+.p-TabBar.theia-app-centers .p-TabBar-tabLabelDetails {
+  margin-left: 5px;
+  color: var(--theia-ui-font-color2);
+  flex: 1 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.p-TabBar.theia-app-centers .p-TabBar-tabLabelWrapper {
+  display: flex;
 }
 
 .p-TabBar-tab-secondary-label {
@@ -119,16 +136,14 @@
 }
 
 .p-TabBar.theia-app-centers .p-TabBar-tabIcon {
-    height: 15px;
+    height: 14px;
     background-size: 13px;
     background-position-y: 3px;
     background-color: var(--theia-tab-icon-color);
     -webkit-mask-repeat: no-repeat;
     -webkit-mask-size: 13px;
-    -webkit-mask-position-y: 1px;
     mask-repeat: no-repeat;
     mask-size: 13px;
-    mask-position: 0 1px;
     padding-right: 2px;
 }
 
@@ -256,7 +271,7 @@
   display: flex;
   align-items: center;
   margin-left: 8px; /* `padding` + `margin-right` from the container toolbar */
-  opacity: 0.25;
+  opacity: var(--theia-mod-disabled-opacity);;
   cursor: default;
 }
 
@@ -265,9 +280,29 @@
     cursor: pointer;
 }
 
+.p-TabBar-toolbar .item.enabled.active {
+    transform: scale(1.272019649);
+}
+
 .p-TabBar-toolbar .item > div {
     height: 18px;
     width: 18px;
     background-repeat: no-repeat;
     line-height: 18px;
+}
+
+.p-TabBar-toolbar .item .collapse-all {
+  background: var(--theia-icon-collapse-all) no-repeat;
+}
+
+.p-TabBar-toolbar .item .close {
+  background: var(--theia-icon-collapse-all) no-repeat;
+}
+
+.p-TabBar-toolbar .item .clear-all {
+  background: var(--theia-icon-clear) no-repeat;
+}
+
+.p-TabBar-toolbar .item .refresh {
+  background: var(--theia-icon-refresh) no-repeat;
 }

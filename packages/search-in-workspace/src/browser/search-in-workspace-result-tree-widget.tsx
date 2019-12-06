@@ -43,6 +43,7 @@ import { MEMORY_TEXT } from './in-memory-text-resource';
 import URI from '@theia/core/lib/common/uri';
 import * as React from 'react';
 import { SearchInWorkspacePreferences } from './search-in-workspace-preferences';
+import { ProgressService } from '@theia/core';
 
 const ROOT_ID = 'ResultTree';
 
@@ -117,6 +118,7 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
     @inject(WorkspaceService) protected readonly workspaceService: WorkspaceService;
     @inject(TreeExpansionService) protected readonly expansionService: TreeExpansionService;
     @inject(SearchInWorkspacePreferences) protected readonly searchInWorkspacePreferences: SearchInWorkspacePreferences;
+    @inject(ProgressService) protected readonly progressService: ProgressService;
 
     constructor(
         @inject(TreeProps) readonly props: TreeProps,
@@ -207,6 +209,7 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
             this.refreshModelChildren();
             return;
         }
+        const progress = await this.progressService.showProgress({ text: `search: ${searchTerm}`, options: { location: 'search' } });
         const searchId = await this.searchService.search(searchTerm, {
             onResult: (aSearchId: number, result: SearchInWorkspaceResult) => {
                 if (token.isCancellationRequested || aSearchId !== searchId) {
@@ -242,6 +245,7 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
                 }
             },
             onDone: () => {
+                progress.cancel();
                 if (token.isCancellationRequested) {
                     return;
                 }
@@ -257,6 +261,7 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
             }
         }, searchOptions).catch(e => { return; });
         token.onCancellationRequested(() => {
+            progress.cancel();
             if (searchId) {
                 this.searchService.cancel(searchId);
             }
@@ -310,9 +315,13 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
             if (currentTitle && currentTitle.owner instanceof EditorWidget) {
                 const widget = currentTitle.owner;
                 const fileNodes = this.getFileNodesByUri(widget.editor.uri);
-                fileNodes.forEach(node => {
-                    this.decorateEditor(node, widget);
-                });
+                if (fileNodes.length > 0) {
+                    fileNodes.forEach(node => {
+                        this.decorateEditor(node, widget);
+                    });
+                } else {
+                    this.decorateEditor(undefined, widget);
+                }
             }
         });
 
@@ -649,7 +658,7 @@ export class SearchInWorkspaceResultTreeWidget extends TreeWidget {
         const replaceTerm = this._replaceTerm !== '' && this._showReplaceButtons ? <span className='replace-term'>{this._replaceTerm}</span> : '';
         const className = `match${this._showReplaceButtons ? ' strike-through' : ''}`;
         return <React.Fragment>
-            <span className={className}> {node.lineText.substr(node.character - 1, node.length)}</span>
+            <span className={className}>{node.lineText.substr(node.character - 1, node.length)}</span>
             {replaceTerm}
         </React.Fragment>;
     }

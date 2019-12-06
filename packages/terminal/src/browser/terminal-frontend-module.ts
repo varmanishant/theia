@@ -39,6 +39,7 @@ import { createTerminalSearchFactory } from './search/terminal-search-container'
 
 import '../../src/browser/style/terminal.css';
 import 'xterm/lib/xterm.css';
+import { TerminalCopyOnSelectionHandler } from './terminal-copy-on-selection-handler';
 
 export default new ContainerModule(bind => {
     bindTerminalPreferences(bind);
@@ -72,6 +73,7 @@ export default new ContainerModule(bind => {
     }));
 
     bind(TerminalQuickOpenService).toSelf().inSingletonScope();
+    bind(TerminalCopyOnSelectionHandler).toSelf().inSingletonScope();
 
     bind(TerminalQuickOpenContribution).toSelf().inSingletonScope();
     for (const identifier of [CommandContribution, QuickOpenContribution]) {

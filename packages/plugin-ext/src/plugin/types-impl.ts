@@ -13,6 +13,11 @@
  *
  * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
  ********************************************************************************/
+// copied from https://github.com/microsoft/vscode/blob/1.37.0/src/vs/workbench/api/common/extHostTypes.ts
+/*---------------------------------------------------------------------------------------------
+*  Copyright (c) Microsoft Corporation. All rights reserved.
+*  Licensed under the MIT License. See License.txt in the project root for license information.
+*--------------------------------------------------------------------------------------------*/
 
 import { UUID } from '@phosphor/coreutils/lib/uuid';
 import { illegalArgument } from '../common/errors';
@@ -785,6 +790,17 @@ export class Location {
             this.range = new Range(rangeOrPosition, rangeOrPosition);
         }
     }
+
+    static isLocation(thing: {}): thing is theia.Location {
+        if (thing instanceof Location) {
+            return true;
+        }
+        if (!thing) {
+            return false;
+        }
+        return Range.isRange((<Location>thing).range)
+            && URI.isUri((<Location>thing).uri);
+    }
 }
 
 export enum DiagnosticTag {
@@ -819,10 +835,10 @@ export enum MarkerTag {
 }
 
 export class ParameterInformation {
-    label: string;
+    label: string | [number, number];
     documentation?: string | MarkdownString;
 
-    constructor(label: string, documentation?: string | MarkdownString) {
+    constructor(label: string | [number, number], documentation?: string | MarkdownString) {
         this.label = label;
         this.documentation = documentation;
     }
@@ -836,13 +852,24 @@ export class SignatureInformation {
     constructor(label: string, documentation?: string | MarkdownString) {
         this.label = label;
         this.documentation = documentation;
+        this.parameters = [];
     }
+}
+
+export enum SignatureHelpTriggerKind {
+    Invoke = 1,
+    TriggerCharacter = 2,
+    ContentChange = 3,
 }
 
 export class SignatureHelp {
     signatures: SignatureInformation[];
     activeSignature: number;
     activeParameter: number;
+
+    constructor() {
+        this.signatures = [];
+    }
 }
 
 export class Hover {
@@ -1229,6 +1256,20 @@ export enum FileChangeType {
 export enum CommentThreadCollapsibleState {
     Collapsed = 0,
     Expanded = 1
+}
+
+export interface QuickInputButton {
+    readonly iconPath: URI | { light: string | URI; dark: string | URI } | ThemeIcon;
+    readonly tooltip?: string | undefined;
+}
+
+export class QuickInputButtons {
+    static readonly Back: QuickInputButton = {
+        iconPath: {
+            id: 'Back'
+        },
+        tooltip: 'Back'
+    };
 }
 
 export enum CommentMode {

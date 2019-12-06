@@ -15,19 +15,19 @@
  ********************************************************************************/
 
 import { inject, injectable } from 'inversify';
-import {
-    QuickOpenService, QuickOpenModel, QuickOpenItem,
-    QuickOpenGroupItem, QuickOpenMode, QuickOpenHandler, QuickOpenOptions, QuickOpenActionProvider, QuickOpenGroupItemOptions
-} from '@theia/core/lib/browser/quick-open/';
 import { TaskService } from './task-service';
-import { ContributedTaskConfiguration, TaskInfo, TaskConfiguration } from '../common/task-protocol';
-import { TaskConfigurations } from './task-configurations';
+import { TaskInfo, TaskConfiguration, TaskCustomization } from '../common/task-protocol';
 import { TaskDefinitionRegistry } from './task-definition-registry';
 import URI from '@theia/core/lib/common/uri';
 import { TaskActionProvider } from './task-action-provider';
-import { LabelProvider } from '@theia/core/lib/browser';
+import { QuickOpenHandler, QuickOpenService, QuickOpenOptions } from '@theia/core/lib/browser';
 import { WorkspaceService } from '@theia/workspace/lib/browser';
 import { TerminalService } from '@theia/terminal/lib/browser/base/terminal-service';
+import { FileSystem } from '@theia/filesystem/lib/common';
+import { QuickOpenModel, QuickOpenItem, QuickOpenActionProvider, QuickOpenMode, QuickOpenGroupItem, QuickOpenGroupItemOptions } from '@theia/core/lib/common/quick-open-model';
+import { PreferenceService } from '@theia/core/lib/browser';
+import { TaskNameResolver } from './task-name-resolver';
+import { TaskConfigurationManager } from './task-configuration-manager';
 
 @injectable()
 export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
@@ -48,20 +48,23 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
     @inject(TaskActionProvider)
     protected readonly taskActionProvider: TaskActionProvider;
 
-    @inject(LabelProvider)
-    protected readonly labelProvider: LabelProvider;
-
     @inject(WorkspaceService)
     protected readonly workspaceService: WorkspaceService;
 
-    /**
-     * @deprecated To be removed in 0.5.0
-     */
-    @inject(TaskConfigurations)
-    protected readonly taskConfigurations: TaskConfigurations;
-
     @inject(TaskDefinitionRegistry)
     protected readonly taskDefinitionRegistry: TaskDefinitionRegistry;
+
+    @inject(TaskNameResolver)
+    protected readonly taskNameResolver: TaskNameResolver;
+
+    @inject(FileSystem)
+    protected readonly fileSystem: FileSystem;
+
+    @inject(TaskConfigurationManager)
+    protected readonly taskConfigurationManager: TaskConfigurationManager;
+
+    @inject(PreferenceService)
+    protected readonly preferences: PreferenceService;
 
     /** Initialize this quick open model with the tasks. */
     async init(): Promise<void> {
@@ -70,15 +73,14 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
         const providedTasks = await this.taskService.getProvidedTasks();
 
         const { filteredRecentTasks, filteredConfiguredTasks, filteredProvidedTasks } = this.getFilteredTasks(recentTasks, configuredTasks, providedTasks);
-        const stat = this.workspaceService.workspace;
-        const isMulti = stat ? !stat.isDirectory : false;
+        const isMulti: boolean = this.workspaceService.isMultiRootWorkspaceOpened;
         this.items = [];
         this.items.push(
             ...filteredRecentTasks.map((task, index) => {
                 const item = new TaskRunQuickOpenItem(task, this.taskService, isMulti, {
                     groupLabel: index === 0 ? 'recently used tasks' : undefined,
                     showBorder: false
-                });
+                }, this.taskNameResolver);
                 item['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
                 return item;
             }),
@@ -90,7 +92,7 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
                             ? false
                             : index === 0 ? true : false
                     )
-                });
+                }, this.taskNameResolver);
                 item['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
                 return item;
             }),
@@ -102,24 +104,29 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
                             ? false
                             : index === 0 ? true : false
                     )
-                });
+                }, this.taskNameResolver);
                 item['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
                 return item;
             })
         );
 
         this.actionProvider = this.items.length ? this.taskActionProvider : undefined;
-
-        if (!this.items.length) {
-            this.items.push(new QuickOpenItem({
-                label: 'No tasks found',
-                run: (mode: QuickOpenMode): boolean => false
-            }));
-        }
     }
 
     async open(): Promise<void> {
         await this.init();
+        if (!this.items.length) {
+            this.items.push(new QuickOpenItem({
+                label: 'No task to run found. Configure Tasks...',
+                run: (mode: QuickOpenMode): boolean => {
+                    if (mode !== QuickOpenMode.OPEN) {
+                        return false;
+                    }
+                    this.configure();
+                    return true;
+                }
+            }));
+        }
         this.quickOpenService.open(this, {
             placeholder: 'Select the task to run',
             fuzzyMatchLabel: true,
@@ -172,23 +179,173 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
     async configure(): Promise<void> {
         this.items = [];
         this.actionProvider = undefined;
+        const isMulti: boolean = this.workspaceService.isMultiRootWorkspaceOpened;
 
+        const configuredTasks = await this.taskService.getConfiguredTasks();
         const providedTasks = await this.taskService.getProvidedTasks();
-        if (!providedTasks.length) {
+
+        // check if tasks.json exists. If not, display "Create tasks.json file from template"
+        // If tasks.json exists and empty, display 'Open tasks.json file'
+        let isFirstGroup = true;
+        const { filteredConfiguredTasks, filteredProvidedTasks } = this.getFilteredTasks([], configuredTasks, providedTasks);
+        const groupedTasks = this.getGroupedTasksByWorkspaceFolder([...filteredConfiguredTasks, ...filteredProvidedTasks]);
+        if (groupedTasks.has(undefined)) {
+            const configs = groupedTasks.get(undefined)!;
+            this.items.push(
+                ...configs.map(taskConfig => {
+                    const item = new TaskConfigureQuickOpenItem(
+                        taskConfig,
+                        this.taskService,
+                        this.taskNameResolver,
+                        this.workspaceService,
+                        isMulti,
+                        { showBorder: false }
+                    );
+                    item['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
+                    return item;
+                })
+            );
+            isFirstGroup = false;
+        }
+
+        const rootUris = (await this.workspaceService.roots).map(rootStat => rootStat.uri);
+        for (const rootFolder of rootUris) {
+            const uri = new URI(rootFolder).withScheme('file');
+            const folderName = uri.displayName;
+            if (groupedTasks.has(uri.toString())) {
+                const configs = groupedTasks.get(uri.toString())!;
+                this.items.push(
+                    ...configs.map((taskConfig, index) => {
+                        const item = new TaskConfigureQuickOpenItem(
+                            taskConfig,
+                            this.taskService,
+                            this.taskNameResolver,
+                            this.workspaceService,
+                            isMulti,
+                            {
+                                groupLabel: index === 0 && isMulti ? folderName : '',
+                                showBorder: !isFirstGroup && index === 0
+                            }
+                        );
+                        item['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
+                        return item;
+                    })
+                );
+            } else {
+                const { configUri } = this.preferences.resolve('tasks', [], uri.toString());
+                const existTaskConfigFile = !!configUri;
+                this.items.push(new QuickOpenGroupItem({
+                    label: existTaskConfigFile ? 'Open tasks.json file' : 'Create tasks.json file from template',
+                    run: (mode: QuickOpenMode): boolean => {
+                        if (mode !== QuickOpenMode.OPEN) {
+                            return false;
+                        }
+                        setTimeout(() => this.taskConfigurationManager.openConfiguration(uri.toString()));
+                        return true;
+                    },
+                    showBorder: !isFirstGroup,
+                    groupLabel: isMulti ? folderName : ''
+                }));
+            }
+            isFirstGroup = false;
+        }
+
+        if (this.items.length === 0) {
             this.items.push(new QuickOpenItem({
                 label: 'No tasks found',
                 run: (_mode: QuickOpenMode): boolean => false
             }));
         }
 
-        providedTasks.forEach(task => {
-            this.items.push(new TaskConfigureQuickOpenItem(task, this.taskService, this.labelProvider));
-        });
-
         this.quickOpenService.open(this, {
             placeholder: 'Select a task to configure',
             fuzzyMatchLabel: true,
-            fuzzySort: true
+            fuzzySort: false
+        });
+    }
+
+    async runBuildOrTestTask(buildOrTestType: 'build' | 'test'): Promise<void> {
+        const shouldRunBuildTask = buildOrTestType === 'build';
+        await this.init();
+        if (this.items.length > 1 ||
+            this.items.length === 1 && (this.items[0] as TaskRunQuickOpenItem).getTask !== undefined) { // the item in `this.items` is not 'No tasks found'
+
+            const buildOrTestTasks = this.items.filter((t: TaskRunQuickOpenItem) =>
+                shouldRunBuildTask ? TaskCustomization.isBuildTask(t.getTask()) : TaskCustomization.isTestTask(t.getTask())
+            );
+            this.actionProvider = undefined;
+            if (buildOrTestTasks.length > 0) { // build / test tasks are defined in the workspace
+                const defaultBuildOrTestTasks = buildOrTestTasks.filter((t: TaskRunQuickOpenItem) =>
+                    shouldRunBuildTask ? TaskCustomization.isDefaultBuildTask(t.getTask()) : TaskCustomization.isDefaultTestTask(t.getTask())
+                );
+                if (defaultBuildOrTestTasks.length === 1) { // run the default build / test task
+                    const defaultBuildOrTestTask = defaultBuildOrTestTasks[0];
+                    const taskToRun = (defaultBuildOrTestTask as TaskRunQuickOpenItem).getTask();
+                    if (this.taskDefinitionRegistry && !!this.taskDefinitionRegistry.getDefinition(taskToRun)) {
+                        this.taskService.run(taskToRun.source, taskToRun.label);
+                    } else {
+                        this.taskService.run(taskToRun._source, taskToRun.label);
+                    }
+                    return;
+                }
+
+                // if default build / test task is not found, or there are more than one default,
+                // display the list of build /test tasks to let the user decide which to run
+                this.items = buildOrTestTasks;
+
+            } else { // no build / test tasks, display an action item to configure the build / test task
+                this.items = [new QuickOpenItem({
+                    label: `No ${buildOrTestType} task to run found. Configure ${buildOrTestType.charAt(0).toUpperCase() + buildOrTestType.slice(1)} Task...`,
+                    run: (mode: QuickOpenMode): boolean => {
+                        if (mode !== QuickOpenMode.OPEN) {
+                            return false;
+                        }
+
+                        this.init().then(() => {
+                            // update the `tasks.json` file, instead of running the task itself
+                            this.items = this.items.map((item: TaskRunQuickOpenItem) => {
+                                const newItem = new ConfigureBuildOrTestTaskQuickOpenItem(
+                                    item.getTask(),
+                                    this.taskService,
+                                    this.workspaceService.isMultiRootWorkspaceOpened,
+                                    item.options,
+                                    this.taskNameResolver,
+                                    shouldRunBuildTask,
+                                    this.taskConfigurationManager
+                                );
+                                newItem['taskDefinitionRegistry'] = this.taskDefinitionRegistry;
+                                return newItem;
+                            });
+                            this.quickOpenService.open(this, {
+                                placeholder: `Select the task to be used as the default ${buildOrTestType} task`,
+                                fuzzyMatchLabel: true,
+                                fuzzySort: false
+                            });
+                        });
+
+                        return true;
+                    }
+                })];
+            }
+        } else { // no tasks are currently present, prompt users if they'd like to configure a task.
+            this.items = [
+                new QuickOpenItem({
+                    label: `No ${buildOrTestType} task to run found. Configure ${buildOrTestType.charAt(0).toUpperCase() + buildOrTestType.slice(1)} Task...`,
+                    run: (mode: QuickOpenMode): boolean => {
+                        if (mode !== QuickOpenMode.OPEN) {
+                            return false;
+                        }
+                        this.configure();
+                        return true;
+                    }
+                })
+            ];
+        }
+
+        this.quickOpenService.open(this, {
+            placeholder: `Select the ${buildOrTestType} task to run`,
+            fuzzyMatchLabel: true,
+            fuzzySort: false
         });
     }
 
@@ -205,15 +362,15 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
 
         const filteredRecentTasks: TaskConfiguration[] = [];
         recentTasks.forEach(recent => {
-            const exist = [...configuredTasks, ...providedTasks].some(t => TaskConfiguration.equals(recent, t));
-            if (exist) {
-                filteredRecentTasks.push(recent);
+            const originalTaskConfig = [...configuredTasks, ...providedTasks].find(t => this.taskDefinitionRegistry.compareTasks(recent, t));
+            if (originalTaskConfig) {
+                filteredRecentTasks.push(originalTaskConfig);
             }
         });
 
         const filteredProvidedTasks: TaskConfiguration[] = [];
         providedTasks.forEach(provided => {
-            const exist = [...filteredRecentTasks, ...configuredTasks].some(t => ContributedTaskConfiguration.equals(provided, t));
+            const exist = [...filteredRecentTasks, ...configuredTasks].some(t => this.taskDefinitionRegistry.compareTasks(provided, t));
             if (!exist) {
                 filteredProvidedTasks.push(provided);
             }
@@ -221,7 +378,7 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
 
         const filteredConfiguredTasks: TaskConfiguration[] = [];
         configuredTasks.forEach(configured => {
-            const exist = filteredRecentTasks.some(t => TaskConfiguration.equals(configured, t));
+            const exist = filteredRecentTasks.some(t => this.taskDefinitionRegistry.compareTasks(configured, t));
             if (!exist) {
                 filteredConfiguredTasks.push(configured);
             }
@@ -230,6 +387,22 @@ export class QuickOpenTask implements QuickOpenModel, QuickOpenHandler {
         return {
             filteredRecentTasks, filteredConfiguredTasks, filteredProvidedTasks
         };
+    }
+
+    private getGroupedTasksByWorkspaceFolder(tasks: TaskConfiguration[]): Map<string | undefined, TaskConfiguration[]> {
+        const grouped = new Map<string | undefined, TaskConfiguration[]>();
+        for (const task of tasks) {
+            const folder = task._scope;
+            if (grouped.has(folder)) {
+                grouped.get(folder)!.push(task);
+            } else {
+                grouped.set(folder, [task]);
+            }
+        }
+        for (const taskConfigs of grouped.values()) {
+            taskConfigs.sort((t1, t2) => t1.label.localeCompare(t2.label));
+        }
+        return grouped;
     }
 }
 
@@ -241,7 +414,8 @@ export class TaskRunQuickOpenItem extends QuickOpenGroupItem {
         protected readonly task: TaskConfiguration,
         protected taskService: TaskService,
         protected isMulti: boolean,
-        protected readonly options: QuickOpenGroupItemOptions,
+        public readonly options: QuickOpenGroupItemOptions,
+        protected readonly taskNameResolver: TaskNameResolver,
     ) {
         super(options);
     }
@@ -251,10 +425,7 @@ export class TaskRunQuickOpenItem extends QuickOpenGroupItem {
     }
 
     getLabel(): string {
-        if (this.taskDefinitionRegistry && !!this.taskDefinitionRegistry.getDefinition(this.task)) {
-            return `${this.task._source}: ${this.task.label}`;
-        }
-        return `${this.task.type}: ${this.task.label}`;
+        return this.taskNameResolver.resolve(this.task);
     }
 
     getGroupLabel(): string {
@@ -281,7 +452,38 @@ export class TaskRunQuickOpenItem extends QuickOpenGroupItem {
             return false;
         }
 
-        this.taskService.run(this.task._source, this.task.label);
+        if (this.taskDefinitionRegistry && !!this.taskDefinitionRegistry.getDefinition(this.task)) {
+            this.taskService.run(this.task.source || this.task._source, this.task.label);
+        } else {
+            this.taskService.run(this.task._source, this.task.label);
+        }
+        return true;
+    }
+}
+
+export class ConfigureBuildOrTestTaskQuickOpenItem extends TaskRunQuickOpenItem {
+    constructor(
+        protected readonly task: TaskConfiguration,
+        protected taskService: TaskService,
+        protected isMulti: boolean,
+        public readonly options: QuickOpenGroupItemOptions,
+        protected readonly taskNameResolver: TaskNameResolver,
+        protected readonly isBuildTask: boolean,
+        protected taskConfigurationManager: TaskConfigurationManager
+    ) {
+        super(task, taskService, isMulti, options, taskNameResolver);
+    }
+
+    run(mode: QuickOpenMode): boolean {
+        if (mode !== QuickOpenMode.OPEN) {
+            return false;
+        }
+        this.taskService.updateTaskConfiguration(this.task, { group: { kind: this.isBuildTask ? 'build' : 'test', isDefault: true } })
+            .then(() => {
+                if (this.task._scope) {
+                    this.taskConfigurationManager.openConfiguration(this.task._scope);
+                }
+            });
         return true;
     }
 }
@@ -312,23 +514,41 @@ export class TaskAttachQuickOpenItem extends QuickOpenItem {
 }
 export class TaskConfigureQuickOpenItem extends QuickOpenGroupItem {
 
+    protected taskDefinitionRegistry: TaskDefinitionRegistry;
+
     constructor(
         protected readonly task: TaskConfiguration,
         protected readonly taskService: TaskService,
-        protected readonly labelProvider: LabelProvider
+        protected readonly taskNameResolver: TaskNameResolver,
+        protected readonly workspaceService: WorkspaceService,
+        protected readonly isMulti: boolean,
+        protected readonly options: QuickOpenGroupItemOptions
     ) {
-        super();
+        super(options);
+        const stat = this.workspaceService.workspace;
+        this.isMulti = stat ? !stat.isDirectory : false;
     }
 
     getLabel(): string {
-        return `${this.task._source}: ${this.task.label}`;
+        return this.taskNameResolver.resolve(this.task);
+    }
+
+    getGroupLabel(): string {
+        return this.options.groupLabel || '';
     }
 
     getDescription(): string {
-        if (this.task._scope) {
-            return this.labelProvider.getLongName(new URI(this.task._scope));
+        if (!this.isMulti) {
+            return '';
         }
-        return this.task._source;
+        if (this.taskDefinitionRegistry && !!this.taskDefinitionRegistry.getDefinition(this.task)) {
+            if (this.task._scope) {
+                return new URI(this.task._scope).displayName;
+            }
+            return this.task._source;
+        } else {
+            return new URI(this.task._source).displayName;
+        }
     }
 
     run(mode: QuickOpenMode): boolean {

@@ -33,6 +33,8 @@ import { parseCssMagnitude } from './browser';
 import { WidgetManager } from './widget-manager';
 import { TabBarToolbarRegistry, TabBarToolbarFactory, TabBarToolbar } from './shell/tab-bar-toolbar';
 import { Key } from './keys';
+import { ProgressLocationService } from './progress-location-service';
+import { ProgressBar } from './progress-bar';
 
 export interface ViewContainerTitleOptions {
     label: string;
@@ -44,6 +46,7 @@ export interface ViewContainerTitleOptions {
 @injectable()
 export class ViewContainerIdentifier {
     id: string;
+    progressLocationId?: string;
 }
 
 /**
@@ -88,6 +91,9 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
 
     protected readonly onDidChangeTrackableWidgetsEmitter = new Emitter<Widget[]>();
     readonly onDidChangeTrackableWidgets = this.onDidChangeTrackableWidgetsEmitter.event;
+
+    @inject(ProgressLocationService)
+    protected readonly progressLocationService: ProgressLocationService;
 
     @postConstruct()
     protected init(): void {
@@ -138,6 +144,10 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
             }),
             this.onDidChangeTrackableWidgetsEmitter
         ]);
+        if (this.options.progressLocationId) {
+            const onProgress = this.progressLocationService.onProgress(this.options.progressLocationId);
+            this.toDispose.push(new ProgressBar({ container: this.node, insertMode: 'prepend' }, onProgress));
+        }
     }
 
     protected readonly toDisposeOnCurrentPart = new DisposableCollection();
@@ -278,6 +288,7 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
                     this.fireDidChangeTrackableWidgets();
                 }
             }),
+            this.registerDND(newPart),
             newPart.onVisibilityChanged(() => {
                 this.updateTitle();
                 this.updateCurrentPart();
@@ -286,7 +297,6 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
                 this.containerLayout.updateCollapsed(newPart, this.enableAnimation);
                 this.updateCurrentPart();
             }),
-            newPart.onMoveBefore(toMoveId => this.moveBefore(toMoveId, newPart.id)),
             newPart.onContextMenu(event => {
                 if (event.button === 2) {
                     event.preventDefault();
@@ -412,7 +422,7 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
             execute: () => {
                 const toHide = find(this.containerLayout.iter(), part => part.id === toRegister.id);
                 if (toHide) {
-                    this.toggleVisibility(toHide);
+                    toHide.setHidden(!toHide.isHidden);
                 }
             },
             isToggled: () => {
@@ -469,15 +479,6 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
         return `${this.id}:toggle-visibility`;
     }
 
-    protected toggleVisibility(part: ViewContainerPart): void {
-        if (part.canHide) {
-            part.setHidden(!part.isHidden);
-            if (!part.isHidden) {
-                part.collapsed = false;
-            }
-        }
-    }
-
     protected moveBefore(toMovedId: string, moveBeforeThisId: string): void {
         const parts = this.getParts();
         const toMoveIndex = parts.findIndex(part => part.id === toMovedId);
@@ -519,7 +520,6 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
             return undefined;
         }
         part.setHidden(false);
-        part.collapsed = false;
         return part;
     }
 
@@ -528,7 +528,7 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
         if (this.currentPart) {
             this.currentPart.activate();
         } else {
-            this.panel.node.focus();
+            this.panel.node.focus({ preventScroll: true });
         }
     }
 
@@ -552,6 +552,61 @@ export class ViewContainer extends BaseWidget implements StatefulWidget, Applica
     protected onAfterShow(msg: Message): void {
         super.onAfterShow(msg);
         this.lastVisibleState = undefined;
+    }
+
+    protected draggingPart: ViewContainerPart | undefined;
+
+    protected registerDND(part: ViewContainerPart): Disposable {
+        part['header'].draggable = true;
+        const style = (event: DragEvent) => {
+            if (!this.draggingPart) {
+                return;
+            }
+            event.preventDefault();
+            const enclosingPartNode = ViewContainerPart.closestPart(event.target);
+            if (enclosingPartNode && enclosingPartNode !== this.draggingPart.node) {
+                enclosingPartNode.classList.add('drop-target');
+            }
+        };
+        const unstyle = (event: DragEvent) => {
+            if (!this.draggingPart) {
+                return;
+            }
+            event.preventDefault();
+            const enclosingPartNode = ViewContainerPart.closestPart(event.target);
+            if (enclosingPartNode) {
+                enclosingPartNode.classList.remove('drop-target');
+            }
+        };
+        return new DisposableCollection(
+            addEventListener(part['header'], 'dragstart', event => {
+                const { dataTransfer } = event;
+                if (dataTransfer) {
+                    this.draggingPart = part;
+                    dataTransfer.effectAllowed = 'move';
+                    dataTransfer.setData('view-container-dnd', part.id);
+                    const dragImage = document.createElement('div');
+                    dragImage.classList.add('theia-view-container-drag-image');
+                    dragImage.innerText = part.wrapped.title.label;
+                    document.body.appendChild(dragImage);
+                    dataTransfer.setDragImage(dragImage, -10, -10);
+                    setTimeout(() => document.body.removeChild(dragImage), 0);
+                }
+            }, false),
+            addEventListener(part.node, 'dragend', () => this.draggingPart = undefined, false),
+            addEventListener(part.node, 'dragover', style, false),
+            addEventListener(part.node, 'dragleave', unstyle, false),
+            addEventListener(part.node, 'drop', event => {
+                const { dataTransfer } = event;
+                if (dataTransfer) {
+                    const moveId = dataTransfer.getData('view-container-dnd');
+                    if (moveId && moveId !== part.id) {
+                        this.moveBefore(moveId, part.id);
+                    }
+                    unstyle(event);
+                }
+            }, false)
+        );
     }
 
 }
@@ -602,22 +657,17 @@ export class ViewContainerPart extends BaseWidget {
     protected readonly header: HTMLElement;
     protected readonly body: HTMLElement;
     protected readonly collapsedEmitter = new Emitter<boolean>();
-    protected readonly moveBeforeEmitter = new Emitter<string>();
     protected readonly contextMenuEmitter = new Emitter<MouseEvent>();
-    protected readonly onVisibilityChangedEmitter = new Emitter<boolean>();
-    readonly onVisibilityChanged = this.onVisibilityChangedEmitter.event;
+    /**
+     * @deprecated since 0.11.0, use `onDidChangeVisibility` instead
+     */
+    readonly onVisibilityChanged = this.onDidChangeVisibility;
     protected readonly onTitleChangedEmitter = new Emitter<void>();
     readonly onTitleChanged = this.onTitleChangedEmitter.event;
     protected readonly onDidFocusEmitter = new Emitter<this>();
     readonly onDidFocus = this.onDidFocusEmitter.event;
 
     protected _collapsed: boolean;
-    /**
-     * Self cannot be a drop target. When the drag event starts, we disable the current part as a possible drop target.
-     *
-     * This is a workaround for not being able to sniff into the `event.dataTransfer.getData` value when `dragover` due to security reasons.
-     */
-    private canBeDropTarget = true;
 
     uncollapsedSize: number | undefined;
     animatedSize: number | undefined;
@@ -650,11 +700,8 @@ export class ViewContainerPart extends BaseWidget {
         this.toDispose.pushAll([
             disposable,
             this.collapsedEmitter,
-            this.moveBeforeEmitter,
             this.contextMenuEmitter,
-            this.onVisibilityChangedEmitter,
             this.onTitleChangedEmitter,
-            this.registerDND(),
             this.registerContextMenu(),
             this.onDidFocusEmitter,
             // focus event does not bubble, capture it
@@ -697,16 +744,22 @@ export class ViewContainerPart extends BaseWidget {
         this.collapsedEmitter.fire(collapsed);
     }
 
+    setHidden(hidden: boolean): void {
+        if (!this.canHide) {
+            return;
+        }
+        super.setHidden(hidden);
+        if (!this.isHidden) {
+            this.collapsed = false;
+        }
+    }
+
     get canHide(): boolean {
         return this.options.canHide === undefined || this.options.canHide;
     }
 
     get onCollapsed(): Event<boolean> {
         return this.collapsedEmitter.event;
-    }
-
-    get onMoveBefore(): Event<string> {
-        return this.moveBeforeEmitter.event;
     }
 
     get onContextMenu(): Event<MouseEvent> {
@@ -757,55 +810,6 @@ export class ViewContainerPart extends BaseWidget {
         );
     }
 
-    protected registerDND(): Disposable {
-        this.header.draggable = true;
-        const style = (event: DragEvent) => {
-            event.preventDefault();
-            const part = ViewContainerPart.closestPart(event.target);
-            if (part instanceof HTMLElement) {
-                if (this.canBeDropTarget) {
-                    part.classList.add('drop-target');
-                }
-            }
-        };
-        const unstyle = (event: DragEvent) => {
-            event.preventDefault();
-            const part = ViewContainerPart.closestPart(event.target);
-            if (part instanceof HTMLElement) {
-                part.classList.remove('drop-target');
-            }
-        };
-        return new DisposableCollection(
-            addEventListener(this.header, 'dragstart', event => {
-                const { dataTransfer } = event;
-                if (dataTransfer) {
-                    this.canBeDropTarget = false;
-                    dataTransfer.effectAllowed = 'move';
-                    dataTransfer.setData('view-container-dnd', this.id);
-                    const dragImage = document.createElement('div');
-                    dragImage.classList.add('theia-view-container-drag-image');
-                    dragImage.innerText = this.wrapped.title.label;
-                    document.body.appendChild(dragImage);
-                    dataTransfer.setDragImage(dragImage, -10, -10);
-                    setTimeout(() => document.body.removeChild(dragImage), 0);
-                }
-            }, false),
-            addEventListener(this.node, 'dragend', () => this.canBeDropTarget = true, false),
-            addEventListener(this.node, 'dragover', style, false),
-            addEventListener(this.node, 'dragleave', unstyle, false),
-            addEventListener(this.node, 'drop', event => {
-                const { dataTransfer } = event;
-                if (dataTransfer) {
-                    const moveId = dataTransfer.getData('view-container-dnd');
-                    if (moveId && moveId !== this.id) {
-                        this.moveBeforeEmitter.fire(moveId);
-                    }
-                    unstyle(event);
-                }
-            }, false)
-        );
-    }
-
     protected createContent(): { header: HTMLElement, body: HTMLElement, disposable: Disposable } {
         const disposable = new DisposableCollection();
         const { header, disposable: headerDisposable } = this.createHeader();
@@ -846,8 +850,13 @@ export class ViewContainerPart extends BaseWidget {
         const title = document.createElement('span');
         title.classList.add('label', 'noselect');
         const updateTitle = () => title.innerText = this.wrapped.title.label;
+        const updateCaption = () => title.title = this.wrapped.title.caption || this.wrapped.title.label;
         updateTitle();
-        disposable.push(this.onTitleChanged(updateTitle));
+        updateCaption();
+        disposable.pushAll([
+            this.onTitleChanged(updateTitle),
+            this.onTitleChanged(updateCaption)
+        ]);
         header.appendChild(title);
         return {
             header,
@@ -971,20 +980,6 @@ export class ViewContainerPart extends BaseWidget {
             this.header.focus();
         } else {
             this.wrapped.activate();
-        }
-    }
-
-    setFlag(flag: Widget.Flag): void {
-        super.setFlag(flag);
-        if (flag === Widget.Flag.IsVisible) {
-            this.onVisibilityChangedEmitter.fire(this.isVisible);
-        }
-    }
-
-    clearFlag(flag: Widget.Flag): void {
-        super.clearFlag(flag);
-        if (flag === Widget.Flag.IsVisible) {
-            this.onVisibilityChangedEmitter.fire(this.isVisible);
         }
     }
 

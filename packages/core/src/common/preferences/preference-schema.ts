@@ -73,18 +73,20 @@ export interface PreferenceItem {
     enum?: string[];
     items?: PreferenceItem;
     properties?: { [name: string]: PreferenceItem };
-    additionalProperties?: object;
+    additionalProperties?: object | boolean;
     [name: string]: any;
     overridable?: boolean;
 }
 
 export interface PreferenceSchemaProperty extends PreferenceItem {
     description?: string;
+    markdownDescription?: string;
     scope?: 'application' | 'window' | 'resource' | PreferenceScope;
 }
 
 export interface PreferenceDataProperty extends PreferenceItem {
     description?: string;
+    markdownDescription?: string;
     scope?: PreferenceScope;
 }
 export namespace PreferenceDataProperty {

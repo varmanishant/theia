@@ -18,11 +18,10 @@ import { injectable, inject, postConstruct } from 'inversify';
 import { Message } from '@phosphor/messaging';
 import URI from '@theia/core/lib/common/uri';
 import { CommandService, SelectionService } from '@theia/core/lib/common';
-import { CommonCommands, CorePreferences } from '@theia/core/lib/browser';
+import { CommonCommands, CorePreferences, LabelProvider, ViewContainerTitleOptions, Key } from '@theia/core/lib/browser';
 import {
     ContextMenuRenderer, ExpandableTreeNode,
-    TreeProps, TreeModel, TreeNode,
-    SelectableTreeNode, CompositeTreeNode
+    TreeProps, TreeModel, TreeNode
 } from '@theia/core/lib/browser';
 import { FileTreeWidget, FileNode, DirNode } from '@theia/filesystem/lib/browser';
 import { WorkspaceService, WorkspaceCommands } from '@theia/workspace/lib/browser';
@@ -36,6 +35,12 @@ import { NavigatorContextKeyService } from './navigator-context-key-service';
 
 export const FILE_NAVIGATOR_ID = 'files';
 export const EXPLORER_VIEW_CONTAINER_ID = 'explorer-view-container';
+export const EXPLORER_VIEW_CONTAINER_TITLE_OPTIONS: ViewContainerTitleOptions = {
+    label: 'Explorer',
+    iconClass: 'navigator-tab-icon',
+    closeable: true
+};
+
 export const LABEL = 'No folder opened';
 export const CLASS = 'theia-Files';
 
@@ -43,6 +48,8 @@ export const CLASS = 'theia-Files';
 export class FileNavigatorWidget extends FileTreeWidget {
 
     @inject(CorePreferences) protected readonly corePreferences: CorePreferences;
+
+    @inject(LabelProvider) protected readonly labelProvider: LabelProvider;
 
     @inject(NavigatorContextKeyService)
     protected readonly contextKeyService: NavigatorContextKeyService;
@@ -60,7 +67,6 @@ export class FileNavigatorWidget extends FileTreeWidget {
         super(props, model, contextMenuRenderer);
         this.id = FILE_NAVIGATOR_ID;
         this.addClass(CLASS);
-        this.initialize();
     }
 
     @postConstruct()
@@ -83,21 +89,6 @@ export class FileNavigatorWidget extends FileTreeWidget {
         ]);
     }
 
-    protected async initialize(): Promise<void> {
-        await this.model.updateRoot();
-        if (this.model.selectedNodes.length) {
-            return;
-        }
-        const root = this.model.root;
-        if (CompositeTreeNode.is(root) && root.children.length === 1) {
-            const child = root.children[0];
-            if (SelectableTreeNode.is(child) && !child.selected && ExpandableTreeNode.is(child)) {
-                this.model.selectNode(child);
-                this.model.expandNode(child);
-            }
-        }
-    }
-
     protected doUpdateRows(): void {
         super.doUpdateRows();
         this.title.label = LABEL;
@@ -106,12 +97,15 @@ export class FileNavigatorWidget extends FileTreeWidget {
                 const rootNode = this.model.root.children[0];
                 if (WorkspaceRootNode.is(rootNode)) {
                     this.title.label = rootNode.name;
+                    this.title.caption = this.labelProvider.getLongName(rootNode.uri);
                 }
             } else {
                 this.title.label = this.model.root.name;
+                this.title.caption = this.title.label;
             }
+        } else {
+            this.title.caption = this.title.label;
         }
-        this.title.caption = this.title.label;
     }
 
     protected enableDndOnMainPanel(): void {
@@ -183,9 +177,11 @@ export class FileNavigatorWidget extends FileTreeWidget {
             if (!raw) {
                 return;
             }
-            const uri = new URI(raw);
-            if (this.model.copy(uri)) {
-                event.preventDefault();
+            for (const file of raw.split('\n')) {
+                const uri = new URI(file);
+                if (this.model.copy(uri)) {
+                    event.preventDefault();
+                }
             }
         }
     }
@@ -202,6 +198,11 @@ export class FileNavigatorWidget extends FileTreeWidget {
         this.commandService.executeCommand(WorkspaceCommands.OPEN_FOLDER.id);
     }
 
+    protected readonly keyUpHandler = (e: React.KeyboardEvent) => {
+        if (Key.ENTER.keyCode === e.keyCode) {
+            (e.target as HTMLElement).click();
+        }
+    }
     /**
      * Instead of rendering the file resources from the workspace, we render a placeholder
      * button when the workspace root is not yet set.
@@ -210,11 +211,13 @@ export class FileNavigatorWidget extends FileTreeWidget {
         let openButton;
 
         if (this.canOpenWorkspaceFileAndFolder) {
-            openButton = <button className='open-workspace-button' title='Select a folder or a workspace-file to open as your workspace' onClick={this.openWorkspace}>
+            openButton = <button className='theia-button open-workspace-button' title='Select a folder or a workspace-file to open as your workspace'
+                onClick={this.openWorkspace} onKeyUp={this.keyUpHandler}>
                 Open Workspace
             </button>;
         } else {
-            openButton = <button className='open-workspace-button' title='Select a folder as your workspace root' onClick={this.openFolder}>
+            openButton = <button className='theia-button open-workspace-button' title='Select a folder as your workspace root' onClick={this.openFolder}
+                onKeyUp={this.keyUpHandler}>
                 Open Folder
             </button>;
         }
@@ -229,7 +232,7 @@ export class FileNavigatorWidget extends FileTreeWidget {
 
     protected handleClickEvent(node: TreeNode | undefined, event: React.MouseEvent<HTMLElement>): void {
         const modifierKeyCombined: boolean = isOSX ? (event.shiftKey || event.metaKey) : (event.shiftKey || event.ctrlKey);
-        if (!modifierKeyCombined && node && this.corePreferences['list.openMode'] === 'singleClick') {
+        if (!modifierKeyCombined && node && this.corePreferences['workbench.list.openMode'] === 'singleClick') {
             this.model.previewNode(node);
         }
         super.handleClickEvent(node, event);

@@ -19,6 +19,7 @@ import { PreferenceService, PreferenceChange } from '../';
 import { Emitter, Event } from '../../../common';
 import { OverridePreferenceName } from '../preference-contribution';
 import URI from '../../../common/uri';
+import { PreferenceChanges } from '../preference-service';
 
 @injectable()
 export class MockPreferenceService implements PreferenceService {
@@ -49,10 +50,14 @@ export class MockPreferenceService implements PreferenceService {
     set(preferenceName: string, value: any): Promise<void> { return Promise.resolve(); }
     ready: Promise<void> = Promise.resolve();
     readonly onPreferenceChanged: Event<PreferenceChange> = new Emitter<PreferenceChange>().event;
+    readonly onPreferencesChanged: Event<PreferenceChanges> = new Emitter<PreferenceChanges>().event;
     overridePreferenceName(options: OverridePreferenceName): string {
         return options.preferenceName;
     }
     overriddenPreferenceName(preferenceName: string): OverridePreferenceName | undefined {
         return undefined;
     }
+
+    // tslint:disable-next-line:no-any
+    validate(name: string, value: any): boolean { return true; }
 }

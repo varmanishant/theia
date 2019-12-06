@@ -51,7 +51,7 @@ export default class URI {
     get allLocations(): URI[] {
         const locations = [];
         let location: URI = this;
-        while (!location.path.isRoot) {
+        while (!location.path.isRoot && location.path.hasDir) {
             locations.push(location);
             location = location.parent;
         }
@@ -162,6 +162,13 @@ export default class URI {
      */
     withoutFragment(): URI {
         return this.withFragment('');
+    }
+
+    /**
+     * return a new URI replacing the current with its normalized path, resolving '..' and '.' segments
+     */
+    normalizePath(): URI {
+        return this.withPath(this.path.normalize());
     }
 
     get scheme(): string {

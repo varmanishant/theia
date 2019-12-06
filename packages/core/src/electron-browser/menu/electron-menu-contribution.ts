@@ -18,11 +18,12 @@ import * as electron from 'electron';
 import { inject, injectable } from 'inversify';
 import {
     Command, CommandContribution, CommandRegistry,
-    isOSX, MenuModelRegistry, MenuContribution
+    isOSX, isWindows, MenuModelRegistry, MenuContribution, Disposable
 } from '../../common';
 import { KeybindingContribution, KeybindingRegistry } from '../../browser';
 import { FrontendApplication, FrontendApplicationContribution, CommonMenus } from '../../browser';
 import { ElectronMainMenuFactory } from './electron-main-menu-factory';
+import { FrontendApplicationStateService, FrontendApplicationState } from '../../browser/frontend-application-state';
 
 export namespace ElectronCommands {
     export const TOGGLE_DEVELOPER_TOOLS: Command = {
@@ -67,16 +68,49 @@ export namespace ElectronMenus {
 @injectable()
 export class ElectronMenuContribution implements FrontendApplicationContribution, CommandContribution, MenuContribution, KeybindingContribution {
 
+    @inject(FrontendApplicationStateService)
+    protected readonly stateService: FrontendApplicationStateService;
+
     constructor(
         @inject(ElectronMainMenuFactory) protected readonly factory: ElectronMainMenuFactory
     ) { }
 
     onStart(app: FrontendApplication): void {
+        this.hideTopPanel(app);
+        this.setMenu();
+        if (isOSX) {
+            // OSX: Recreate the menus when changing windows.
+            // OSX only has one menu bar for all windows, so we need to swap
+            // between them as the user switches windows.
+            electron.remote.getCurrentWindow().on('focus', () => this.setMenu());
+        }
+        // Make sure the application menu is complete, once the frontend application is ready.
+        // https://github.com/theia-ide/theia/issues/5100
+        let onStateChange: Disposable | undefined = undefined;
+        const stateServiceListener = (state: FrontendApplicationState) => {
+            if (state === 'ready') {
+                this.setMenu();
+            }
+            if (state === 'closing_window') {
+                if (!!onStateChange) {
+                    onStateChange.dispose();
+                }
+            }
+        };
+        onStateChange = this.stateService.onStateChanged(stateServiceListener);
+    }
+
+    /**
+     * Makes the `theia-top-panel` hidden as it is unused for the electron-based application.
+     * The `theia-top-panel` is used as the container of the main, application menu-bar for the
+     * browser. Electron has it's own.
+     * By default, this method is called on application `onStart`.
+     */
+    protected hideTopPanel(app: FrontendApplication): void {
         const itr = app.shell.children();
         let child = itr.next();
         while (child) {
             // Top panel for the menu contribution is not required for Electron.
-            // TODO: Make sure this is the case on Windows too.
             if (child.id === 'theia-top-panel') {
                 child.setHidden(true);
                 child = undefined;
@@ -84,22 +118,14 @@ export class ElectronMenuContribution implements FrontendApplicationContribution
                 child = itr.next();
             }
         }
+    }
 
-        const currentWindow = electron.remote.getCurrentWindow();
-        const createdMenuBar = this.factory.createMenuBar();
-
+    private setMenu(menu: electron.Menu = this.factory.createMenuBar(), electronWindow: electron.BrowserWindow = electron.remote.getCurrentWindow()): void {
         if (isOSX) {
-            electron.remote.Menu.setApplicationMenu(createdMenuBar);
-            currentWindow.on('focus', () =>
-                // OSX: Recreate the menus when changing windows.
-                // OSX only has one menu bar for all windows, so we need to swap
-                // between them as the user switch windows.
-                electron.remote.Menu.setApplicationMenu(this.factory.createMenuBar())
-            );
-
+            electron.remote.Menu.setApplicationMenu(menu);
         } else {
             // Unix/Windows: Set the per-window menus
-            currentWindow.setMenu(createdMenuBar);
+            electronWindow.setMenu(menu);
         }
     }
 
@@ -170,7 +196,7 @@ export class ElectronMenuContribution implements FrontendApplicationContribution
             },
             {
                 command: ElectronCommands.CLOSE_WINDOW.id,
-                keybinding: 'ctrlcmd+shift+w'
+                keybinding: (isOSX ? 'cmd+shift+w' : (isWindows ? 'ctrl+w' : /* Linux */ 'ctrl+q'))
             }
         );
     }

@@ -15,11 +15,15 @@
  ********************************************************************************/
 
 import * as theia from '@theia/plugin';
-import { CommandRegistryExt, Plugin as InternalPlugin, PLUGIN_RPC_CONTEXT, ScmExt, ScmMain, ScmCommandArg } from '../common/plugin-api-rpc';
+import { Plugin as InternalPlugin, PLUGIN_RPC_CONTEXT, ScmExt, ScmMain, ScmCommandArg } from '../common/plugin-api-rpc';
 import { RPCProtocol } from '../common/rpc-protocol';
-import { CancellationToken } from '@theia/core';
+import { CancellationToken } from '@theia/core/lib/common/cancellation';
+import { DisposableCollection, Disposable } from '@theia/core/lib/common/disposable';
 import { UriComponents } from '../common/uri-components';
 import URI from '@theia/core/lib/common/uri';
+import { CommandRegistryImpl } from './command-registry';
+import { Emitter } from '@theia/core/lib/common/event';
+import { Command } from '../common/plugin-api-rpc-model';
 
 export class ScmExtImpl implements ScmExt {
     private handle: number = 0;
@@ -27,7 +31,7 @@ export class ScmExtImpl implements ScmExt {
     private readonly sourceControlMap = new Map<number, SourceControlImpl>();
     private readonly sourceControlsByPluginMap: Map<string, theia.SourceControl[]> = new Map();
 
-    constructor(readonly rpc: RPCProtocol, private readonly commands: CommandRegistryExt) {
+    constructor(readonly rpc: RPCProtocol, private readonly commands: CommandRegistryImpl) {
         this.proxy = rpc.getProxy(PLUGIN_RPC_CONTEXT.SCM_MAIN);
         commands.registerArgumentProcessor({
             // tslint:disable-next-line:no-any
@@ -94,6 +98,13 @@ export class ScmExtImpl implements ScmExt {
             sourceControl.inputBox.$updateValue(value);
         }
     }
+
+    async $setSourceControlSelection(sourceControlHandle: number, selected: boolean): Promise<void> {
+        const sourceControl = this.sourceControlMap.get(sourceControlHandle);
+        if (sourceControl) {
+            sourceControl.selected = selected;
+        }
+    }
 }
 
 class InputBoxImpl implements theia.SourceControlInputBox {
@@ -139,16 +150,23 @@ class SourceControlImpl implements theia.SourceControl {
     private _commitTemplate: string | undefined;
     private _acceptInputCommand: theia.Command | undefined;
     private _statusBarCommands: theia.Command[] | undefined;
+    private _selected: boolean = false;
+
+    private readonly toDispose = new DisposableCollection();
+
+    private readonly onDidChangeSelectionEmitter = new Emitter<boolean>();
+    readonly onDidChangeSelection: theia.Event<boolean> = this.onDidChangeSelectionEmitter.event;
 
     constructor(
         private proxy: ScmMain,
-        private commands: CommandRegistryExt,
+        private commands: CommandRegistryImpl,
         private _id: string,
         private _label: string,
         private _rootUri?: theia.Uri
     ) {
         this._inputBox = new InputBoxImpl(proxy, this.handle);
         this.proxy.$registerSourceControl(this.handle, _id, _label, _rootUri ? _rootUri.path : undefined);
+        this.toDispose.push(Disposable.create(() => this.proxy.$unregisterSourceControl(this.handle)));
     }
 
     get id(): string {
@@ -166,6 +184,7 @@ class SourceControlImpl implements theia.SourceControl {
     createResourceGroup(id: string, label: string): theia.SourceControlResourceGroup {
         const sourceControlResourceGroup = new SourceControlResourceGroupImpl(this.proxy, this.commands, this.handle, id, label);
         this.resourceGroupsMap.set(SourceControlImpl.resourceGroupHandle++, sourceControlResourceGroup);
+        this.toDispose.push(sourceControlResourceGroup);
         return sourceControlResourceGroup;
     }
 
@@ -203,42 +222,58 @@ class SourceControlImpl implements theia.SourceControl {
     }
 
     dispose(): void {
-        this.proxy.$unregisterSourceControl(this.handle);
+        this.toDispose.dispose();
     }
+
+    protected toDisposeOnAcceptInputCommand = new DisposableCollection();
 
     get acceptInputCommand(): theia.Command | undefined {
         return this._acceptInputCommand;
     }
 
     set acceptInputCommand(acceptInputCommand: theia.Command | undefined) {
+        this.toDisposeOnAcceptInputCommand.dispose();
+        this.toDispose.push(this.toDisposeOnAcceptInputCommand);
+
         this._acceptInputCommand = acceptInputCommand;
 
-        if (acceptInputCommand && acceptInputCommand.command) {
-            const command = {
-                id: acceptInputCommand.command,
-                title: acceptInputCommand.title || ''
-            };
-            this.proxy.$updateSourceControl(this.handle, { acceptInputCommand: command });
-        }
+        this.proxy.$updateSourceControl(this.handle, {
+            acceptInputCommand: this.commands.converter.toSafeCommand(acceptInputCommand, this.toDisposeOnAcceptInputCommand)
+        });
     }
+
+    protected toDisposeOnStatusBarCommands = new DisposableCollection();
 
     get statusBarCommands(): theia.Command[] | undefined {
         return this._statusBarCommands;
     }
 
     set statusBarCommands(statusBarCommands: theia.Command[] | undefined) {
+        this.toDisposeOnStatusBarCommands.dispose();
+        this.toDispose.push(this.toDisposeOnStatusBarCommands);
+
         this._statusBarCommands = statusBarCommands;
+
+        let safeStatusBarCommands: Command[] | undefined;
         if (statusBarCommands) {
-            const commands = statusBarCommands.map(statusBarCommand => ({
-                command: statusBarCommand.command,
-                title: statusBarCommand.title || ''
-            }));
-            this.proxy.$updateSourceControl(this.handle, { statusBarCommands: commands });
+            safeStatusBarCommands = statusBarCommands.map(statusBarCommand => this.commands.converter.toSafeCommand(statusBarCommand, this.toDisposeOnStatusBarCommands));
         }
+        this.proxy.$updateSourceControl(this.handle, {
+            statusBarCommands: safeStatusBarCommands
+        });
     }
 
     getResourceGroup(handle: number): SourceControlResourceGroupImpl | undefined {
         return this.resourceGroupsMap.get(handle);
+    }
+
+    get selected(): boolean {
+        return this._selected;
+    }
+
+    set selected(selected: boolean) {
+        this._selected = selected;
+        this.onDidChangeSelectionEmitter.fire(selected);
     }
 }
 
@@ -253,7 +288,7 @@ class SourceControlResourceGroupImpl implements theia.SourceControlResourceGroup
 
     constructor(
         private proxy: ScmMain,
-        private commands: CommandRegistryExt,
+        private commands: CommandRegistryImpl,
         private sourceControlHandle: number,
         private _id: string,
         private _label: string,

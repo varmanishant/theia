@@ -15,13 +15,38 @@
  ********************************************************************************/
 
 import { injectable } from 'inversify';
+import { Event, Emitter } from '@theia/core/lib/common';
 import { TaskConfiguration, TaskCustomization, TaskDefinition } from '../common';
+import URI from '@theia/core/lib/common/uri';
+import { Disposable } from '@theia/core/lib/common/disposable';
 
 @injectable()
 export class TaskDefinitionRegistry {
 
     // task type - array of task definitions
     private definitions: Map<string, TaskDefinition[]> = new Map();
+
+    protected readonly onDidRegisterTaskDefinitionEmitter = new Emitter<void>();
+    get onDidRegisterTaskDefinition(): Event<void> {
+        return this.onDidRegisterTaskDefinitionEmitter.event;
+    }
+
+    protected readonly onDidUnregisterTaskDefinitionEmitter = new Emitter<void>();
+    get onDidUnregisterTaskDefinition(): Event<void> {
+        return this.onDidUnregisterTaskDefinitionEmitter.event;
+    }
+
+    /**
+     * Returns all task definitions that are registered
+     * @return the task definitions that are registered
+     */
+    getAll(): TaskDefinition[] {
+        const all: TaskDefinition[] = [];
+        for (const definitions of this.definitions.values()) {
+            all.push(...definitions);
+        }
+        return all;
+    }
 
     /**
      * Finds the task definition(s) from the registry with the given `taskType`.
@@ -67,8 +92,33 @@ export class TaskDefinitionRegistry {
      *
      * @param definition the task definition to be added.
      */
-    register(definition: TaskDefinition): void {
+    register(definition: TaskDefinition): Disposable {
         const taskType = definition.taskType;
-        this.definitions.set(taskType, [...this.getDefinitions(taskType), definition]);
+        const definitions = this.definitions.get(taskType) || [];
+        definitions.push(definition);
+        this.definitions.set(taskType, definitions);
+        this.onDidRegisterTaskDefinitionEmitter.fire(undefined);
+        return Disposable.create(() => {
+            const index = definitions.indexOf(definition);
+            if (index !== -1) {
+                definitions.splice(index, 1);
+            }
+            this.onDidUnregisterTaskDefinitionEmitter.fire(undefined);
+        });
+    }
+
+    compareTasks(one: TaskConfiguration, other: TaskConfiguration): boolean {
+        const oneType = one.taskType || one.type;
+        const otherType = other.taskType || other.type;
+        if (oneType !== otherType) {
+            return false;
+        }
+        const def = this.getDefinition(one);
+        if (def) {
+            const oneScope = new URI(one._scope).path.toString();
+            const otherScope = new URI(other._scope).path.toString();
+            return def.properties.all.every(p => p === 'type' || one[p] === other[p]) && oneScope === otherScope;
+        }
+        return one.label === other.label && one._source === other._source;
     }
 }

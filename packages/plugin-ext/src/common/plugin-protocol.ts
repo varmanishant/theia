@@ -23,6 +23,7 @@ import { IJSONSchema, IJSONSchemaSnippet } from '@theia/core/lib/common/json-sch
 import { RecursivePartial } from '@theia/core/lib/common/types';
 import { PreferenceSchema, PreferenceSchemaProperties } from '@theia/core/lib/common/preferences/preference-schema';
 import { ProblemMatcherContribution, ProblemPatternContribution, TaskDefinition } from '@theia/task/lib/common';
+import { FileStat } from '@theia/filesystem/lib/common';
 
 export const hostedServicePath = '/services/hostedPlugin';
 
@@ -52,6 +53,7 @@ export interface PluginPackage {
     packagePath: string;
     activationEvents?: string[];
     extensionDependencies?: string[];
+    extensionPack?: string[];
 }
 export namespace PluginPackage {
     export function toPluginUrl(pck: PluginPackage, relativePath: string): string {
@@ -63,7 +65,7 @@ export namespace PluginPackage {
  * This interface describes a package.json contribution section object.
  */
 export interface PluginPackageContribution {
-    configuration?: RecursivePartial<PreferenceSchema>;
+    configuration?: RecursivePartial<PreferenceSchema> | RecursivePartial<PreferenceSchema>[];
     configurationDefaults?: RecursivePartial<PreferenceSchemaProperties>;
     languages?: PluginPackageLanguageContribution[];
     grammars?: PluginPackageGrammarsContribution[];
@@ -71,7 +73,7 @@ export interface PluginPackageContribution {
     views?: { [location: string]: PluginPackageView[] };
     commands?: PluginPackageCommand | PluginPackageCommand[];
     menus?: { [location: string]: PluginPackageMenu[] };
-    keybindings?: PluginPackageKeybinding[];
+    keybindings?: PluginPackageKeybinding | PluginPackageKeybinding[];
     debuggers?: PluginPackageDebuggersContribution[];
     snippets: PluginPackageSnippetsContribution[];
     taskDefinitions?: PluginTaskDefinitionContribution[];
@@ -88,6 +90,7 @@ export interface PluginPackageViewContainer {
 export interface PluginPackageView {
     id: string;
     name: string;
+    when?: string;
 }
 
 export interface PluginPackageCommand {
@@ -99,6 +102,7 @@ export interface PluginPackageCommand {
 
 export interface PluginPackageMenu {
     command: string;
+    alt?: string;
     group?: string;
     when?: string;
 }
@@ -183,7 +187,7 @@ export interface PluginPackageLanguageContributionConfiguration {
 export interface PluginTaskDefinitionContribution {
     type: string;
     required: string[];
-    properties: {
+    properties?: {
         [name: string]: {
             type: string;
             description?: string;
@@ -225,6 +229,14 @@ export interface PluginScanner {
      * @returns {PluginLifecycle}
      */
     getLifecycle(plugin: PluginPackage): PluginLifecycle;
+
+    getContribution(plugin: PluginPackage): PluginContribution | undefined;
+
+    /**
+     * A mapping between a dependency as its defined in package.json
+     * and its deployable form, e.g. `publisher.name` -> `vscode:extension/publisher.name`
+     */
+    getDependencies(plugin: PluginPackage): Map<string, string> | undefined;
 }
 
 export const PluginDeployer = Symbol('PluginDeployer');
@@ -268,6 +280,8 @@ export interface PluginDeployerResolverInit {
 export interface PluginDeployerResolverContext {
 
     addPlugin(pluginId: string, path: string): void;
+
+    getPlugins(): PluginDeployerEntry[];
 
     getOriginId(): string;
 
@@ -369,18 +383,21 @@ export interface PluginModel {
         type: PluginEngine;
         version: string;
     };
-    entryPoint: {
-        frontend?: string;
-        backend?: string;
-    };
-    contributes?: PluginContribution;
+    entryPoint: PluginEntryPoint;
+    packagePath: string;
+}
+
+export interface PluginEntryPoint {
+    frontend?: string;
+    backend?: string;
 }
 
 /**
  * This interface describes some static plugin contributions.
  */
 export interface PluginContribution {
-    configuration?: PreferenceSchema;
+    activationEvents?: string[];
+    configuration?: PreferenceSchema[];
     configurationDefaults?: PreferenceSchemaProperties;
     languages?: LanguageContribution[];
     grammars?: GrammarsContribution[];
@@ -407,6 +424,7 @@ export interface GrammarsContribution {
     language?: string;
     scope: string;
     grammar?: string | object;
+    grammarLocation?: string;
     embeddedLanguages?: ScopeMap;
     tokenTypes?: ScopeMap;
     injectTo?: string[];
@@ -497,6 +515,7 @@ export interface ViewContainer {
 export interface View {
     id: string;
     name: string;
+    when?: string;
 }
 
 export interface PluginCommand {
@@ -513,6 +532,7 @@ export type IconUrl = string | { light: string; dark: string; };
  */
 export interface Menu {
     command: string;
+    alt?: string;
     group?: string;
     when?: string;
 }
@@ -570,7 +590,6 @@ export interface ExtensionContext {
 
 export interface PluginMetadata {
     host: string;
-    source: PluginPackage;
     model: PluginModel;
     lifecycle: PluginLifecycle;
 }
@@ -590,10 +609,6 @@ export function buildFrontendModuleName(plugin: PluginPackage | PluginModel): st
 
 export const HostedPluginClient = Symbol('HostedPluginClient');
 export interface HostedPluginClient {
-    setClientId(clientId: number): Promise<void>;
-
-    getClientId(): Promise<number>;
-
     postMessage(message: string): Promise<void>;
 
     log(logPart: LogPart): void;
@@ -601,24 +616,47 @@ export interface HostedPluginClient {
     onDidDeploy(): void;
 }
 
+export interface PluginDependencies {
+    metadata: PluginMetadata
+    mapping?: Map<string, string>
+}
+
 export const PluginDeployerHandler = Symbol('PluginDeployerHandler');
 export interface PluginDeployerHandler {
     deployFrontendPlugins(frontendPlugins: PluginDeployerEntry[]): Promise<void>;
     deployBackendPlugins(backendPlugins: PluginDeployerEntry[]): Promise<void>;
+
+    getPluginDependencies(pluginToBeInstalled: PluginDeployerEntry): Promise<PluginDependencies | undefined>
+}
+
+export interface GetDeployedPluginsParams {
+    pluginIds: string[]
+}
+
+export interface DeployedPlugin {
+    metadata: PluginMetadata;
+    contributes?: PluginContribution;
 }
 
 export const HostedPluginServer = Symbol('HostedPluginServer');
 export interface HostedPluginServer extends JsonRpcServer<HostedPluginClient> {
 
-    getDeployedMetadata(): Promise<PluginMetadata[]>;
-    getDeployedFrontendMetadata(): Promise<PluginMetadata[]>;
-    getDeployedBackendMetadata(): Promise<PluginMetadata[]>;
+    getDeployedPluginIds(): Promise<string[]>;
+
+    getDeployedPlugins(params: GetDeployedPluginsParams): Promise<DeployedPlugin[]>;
 
     getExtPluginAPI(): Promise<ExtPluginApi[]>;
 
     onMessage(message: string): Promise<void>;
 
 }
+
+export interface WorkspaceStorageKind {
+    workspace?: FileStat | undefined;
+    roots: FileStat[];
+}
+export type GlobalStorageKind = undefined;
+export type PluginStorageKind = GlobalStorageKind | WorkspaceStorageKind;
 
 /**
  * The JSON-RPC workspace interface.
@@ -632,9 +670,9 @@ export interface PluginServer {
      */
     deploy(pluginEntry: string): Promise<void>;
 
-    keyValueStorageSet(key: string, value: KeysToAnyValues, isGlobal: boolean): Promise<boolean>;
-    keyValueStorageGet(key: string, isGlobal: boolean): Promise<KeysToAnyValues>;
-    keyValueStorageGetAll(isGlobal: boolean): Promise<KeysToKeysToAnyValue>;
+    setStorageValue(key: string, value: KeysToAnyValues, kind: PluginStorageKind): Promise<boolean>;
+    getStorageValue(key: string, kind: PluginStorageKind): Promise<KeysToAnyValues>;
+    getAllStorageValues(kind: PluginStorageKind): Promise<KeysToKeysToAnyValue>;
 }
 
 export const ServerPluginRunner = Symbol('ServerPluginRunner');
@@ -648,9 +686,15 @@ export interface ServerPluginRunner {
     clientClosed(): void;
 
     /**
-     * Provides additional metadata.
+     * Provides additional deployed plugins.
      */
-    getExtraPluginMetadata(): Promise<PluginMetadata[]>;
+    getExtraDeployedPlugins(): Promise<DeployedPlugin[]>;
+
+    /**
+     * Provides additional plugin ids.
+     */
+    getExtraDeployedPluginIds(): Promise<string[]>;
+
 }
 
 export const PluginHostEnvironmentVariable = Symbol('PluginHostEnvironmentVariable');

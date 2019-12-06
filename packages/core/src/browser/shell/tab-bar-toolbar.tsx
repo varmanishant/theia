@@ -106,7 +106,7 @@ export class TabBarToolbar extends ReactWidget {
     protected render(): React.ReactNode {
         return <React.Fragment>
             {this.renderMore()}
-            {[...this.inline.values()].map(item => TabBarToolbarItem.is(item) ? this.renderItem(item) : item.render())}
+            {[...this.inline.values()].map(item => TabBarToolbarItem.is(item) ? this.renderItem(item) : item.render(this.current))}
         </React.Fragment>;
     }
 
@@ -124,11 +124,12 @@ export class TabBarToolbar extends ReactWidget {
             }
         }
         const command = this.commands.getCommand(item.command);
-        const iconClass = item.icon || (command && command.iconClass);
+        const iconClass = (typeof item.icon === 'function' && item.icon()) || item.icon || (command && command.iconClass);
         if (iconClass) {
             classNames.push(iconClass);
         }
-        return <div key={item.id} className={`${TabBarToolbar.Styles.TAB_BAR_TOOLBAR_ITEM}${command && this.commandIsEnabled(command.id) ? ' enabled' : ''}`} >
+        return <div key={item.id} className={`${TabBarToolbar.Styles.TAB_BAR_TOOLBAR_ITEM}${command && this.commandIsEnabled(command.id) ? ' enabled' : ''}`}
+            onMouseDown={this.onMouseDownEvent} onMouseUp={this.onMouseUpEvent} onMouseOut={this.onMouseUpEvent} >
             <div id={item.id} className={classNames.join(' ')} onClick={this.executeCommand} title={item.tooltip}>{innerText}</div>
         </div>;
     }
@@ -178,6 +179,16 @@ export class TabBarToolbar extends ReactWidget {
         }
     }
 
+    protected onMouseDownEvent = (e: React.MouseEvent<HTMLElement>) => {
+        if (e.button === 0) {
+            e.currentTarget.classList.add('active');
+        }
+    }
+
+    protected onMouseUpEvent = (e: React.MouseEvent<HTMLElement>) => {
+        e.currentTarget.classList.remove('active');
+    }
+
 }
 
 export namespace TabBarToolbar {
@@ -195,10 +206,15 @@ export namespace TabBarToolbar {
  * Clients should implement this interface if they want to contribute to the tab-bar toolbar.
  */
 export const TabBarToolbarContribution = Symbol('TabBarToolbarContribution');
+/**
+ * Representation of a tabbar toolbar contribution.
+ */
 export interface TabBarToolbarContribution {
-
+    /**
+     * Registers toolbar items.
+     * @param registry the tabbar toolbar registry.
+     */
     registerToolbarItems(registry: TabBarToolbarRegistry): void;
-
 }
 
 /**
@@ -255,7 +271,7 @@ export interface TabBarToolbarItem {
     /**
      * Optional icon for the item.
      */
-    readonly icon?: string;
+    readonly icon?: string | (() => string);
 
     /**
      * https://code.visualstudio.com/docs/getstarted/keybindings#_when-clause-contexts
@@ -277,7 +293,7 @@ export interface TabBarToolbarItem {
  */
 export interface ReactTabBarToolbarItem {
     readonly id: string;
-    render(): React.ReactNode;
+    render(widget?: Widget): React.ReactNode;
 
     readonly onDidChange?: Event<void>;
 

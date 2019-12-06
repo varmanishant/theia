@@ -65,6 +65,22 @@ export const TerminalConfigSchema: PreferenceSchema = {
             minimum: 1,
             default: 1
         },
+        'terminal.integrated.scrollback': {
+            description: 'Controls the maximum amount of lines the terminal keeps in its buffer.',
+            type: 'number',
+            default: 1000
+        },
+        'terminal.integrated.rendererType': {
+            description: 'Controls how the terminal is rendered.',
+            type: 'string',
+            enum: ['canvas', 'dom'],
+            default: 'canvas'
+        },
+        'terminal.integrated.copyOnSelection': {
+            description: 'Controls whether text selected in the terminal will be copied to the clipboard.',
+            type: 'boolean',
+            default: false,
+        }
     }
 };
 
@@ -76,10 +92,20 @@ export interface TerminalConfiguration {
     'terminal.integrated.fontWeight': FontWeight
     'terminal.integrated.fontWeightBold': FontWeight
     'terminal.integrated.letterSpacing': number
-    'terminal.integrated.lineHeight': number
+    'terminal.integrated.lineHeight': number,
+    'terminal.integrated.scrollback': number,
+    'terminal.integrated.rendererType': TerminalRendererType,
+    'terminal.integrated.copyOnSelection': boolean,
 }
 
 type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+
+export type TerminalRendererType = 'canvas' | 'dom';
+export const DEFAULT_TERMINAL_RENDERER_TYPE = 'canvas';
+// tslint:disable-next-line:no-any
+export function isTerminalRendererType(arg: any): arg is TerminalRendererType {
+    return typeof arg === 'string' && (arg === 'canvas' || arg === 'dom');
+}
 
 export const TerminalPreferences = Symbol('TerminalPreferences');
 export type TerminalPreferences = PreferenceProxy<TerminalConfiguration>;

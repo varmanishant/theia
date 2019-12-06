@@ -16,22 +16,25 @@
 
 // tslint:disable:no-any
 
-import { injectable, inject, postConstruct } from 'inversify';
-import { Emitter, Event, DisposableCollection, MessageService, WaitUntilEvent } from '@theia/core';
+import { DisposableCollection, Emitter, Event, MessageService, ProgressService, WaitUntilEvent } from '@theia/core';
 import { LabelProvider } from '@theia/core/lib/browser';
-import { EditorManager } from '@theia/editor/lib/browser';
-import { ContextKeyService, ContextKey } from '@theia/core/lib/browser/context-key-service';
-import { DebugError, DebugService } from '../common/debug-service';
-import { DebugState, DebugSession } from './debug-session';
-import { DebugSessionFactory, DebugSessionContributionRegistry } from './debug-session-contribution';
-import { DebugThread } from './model/debug-thread';
-import { DebugStackFrame } from './model/debug-stack-frame';
-import { DebugBreakpoint } from './model/debug-breakpoint';
-import { BreakpointManager } from './breakpoint/breakpoint-manager';
+import { ContextKey, ContextKeyService } from '@theia/core/lib/browser/context-key-service';
 import URI from '@theia/core/lib/common/uri';
+import { EditorManager } from '@theia/editor/lib/browser';
+import { QuickOpenTask } from '@theia/task/lib/browser/quick-open-task';
+import { TaskService } from '@theia/task/lib/browser/task-service';
 import { VariableResolverService } from '@theia/variable-resolver/lib/browser';
-import { DebugSessionOptions, InternalDebugSessionOptions } from './debug-session-options';
+import { inject, injectable, postConstruct } from 'inversify';
 import { DebugConfiguration } from '../common/debug-common';
+import { DebugError, DebugService } from '../common/debug-service';
+import { BreakpointManager } from './breakpoint/breakpoint-manager';
+import { DebugConfigurationManager } from './debug-configuration-manager';
+import { DebugSession, DebugState } from './debug-session';
+import { DebugSessionContributionRegistry, DebugSessionFactory } from './debug-session-contribution';
+import { DebugSessionOptions, InternalDebugSessionOptions } from './debug-session-options';
+import { DebugBreakpoint } from './model/debug-breakpoint';
+import { DebugStackFrame } from './model/debug-stack-frame';
+import { DebugThread } from './model/debug-thread';
 
 export interface WillStartDebugSession extends WaitUntilEvent {
 }
@@ -121,8 +124,20 @@ export class DebugSessionManager {
     @inject(MessageService)
     protected readonly messageService: MessageService;
 
+    @inject(ProgressService)
+    protected readonly progressService: ProgressService;
+
     @inject(ContextKeyService)
     protected readonly contextKeyService: ContextKeyService;
+
+    @inject(TaskService)
+    protected readonly taskService: TaskService;
+
+    @inject(DebugConfigurationManager)
+    protected readonly debugConfigurationManager: DebugConfigurationManager;
+
+    @inject(QuickOpenTask)
+    protected readonly quickOpenTask: QuickOpenTask;
 
     protected debugTypeKey: ContextKey<string>;
     protected inDebugModeKey: ContextKey<boolean>;
@@ -132,6 +147,14 @@ export class DebugSessionManager {
         this.debugTypeKey = this.contextKeyService.createKey<string>('debugType', undefined);
         this.inDebugModeKey = this.contextKeyService.createKey<boolean>('inDebugMode', this.inDebugMode);
         this.breakpoints.onDidChangeMarkers(uri => this.fireDidChangeBreakpoints({ uri }));
+        this.labelProvider.onDidChange(event => {
+            for (const uriString of this.breakpoints.getUris()) {
+                const uri = new URI(uriString);
+                if (event.affects(uri)) {
+                    this.fireDidChangeBreakpoints({ uri });
+                }
+            }
+        });
     }
 
     get inDebugMode(): boolean {
@@ -139,21 +162,32 @@ export class DebugSessionManager {
     }
 
     async start(options: DebugSessionOptions): Promise<DebugSession | undefined> {
-        try {
-            await this.fireWillStartDebugSession();
-            const resolved = await this.resolveConfiguration(options);
-            const sessionId = await this.debug.createDebugSession(resolved.configuration);
-            return this.doStart(sessionId, resolved);
-        } catch (e) {
-            if (DebugError.NotFound.is(e)) {
-                this.messageService.error(`The debug session type "${e.data.type}" is not supported.`);
-                return undefined;
-            }
+        return this.progressService.withProgress('Start...', 'debug', async () => {
+            try {
+                await this.fireWillStartDebugSession();
+                const resolved = await this.resolveConfiguration(options);
 
-            this.messageService.error('There was an error starting the debug session, check the logs for more details.');
-            console.error('Error starting the debug session', e);
-            throw e;
-        }
+                // preLaunchTask isn't run in case of auto restart as well as postDebugTask
+                if (!options.configuration.__restart) {
+                    const taskRun = await this.runTask(options.workspaceFolderUri, resolved.configuration.preLaunchTask, true);
+                    if (!taskRun) {
+                        return undefined;
+                    }
+                }
+
+                const sessionId = await this.debug.createDebugSession(resolved.configuration);
+                return this.doStart(sessionId, resolved);
+            } catch (e) {
+                if (DebugError.NotFound.is(e)) {
+                    this.messageService.error(`The debug session type "${e.data.type}" is not supported.`);
+                    return undefined;
+                }
+
+                this.messageService.error('There was an error starting the debug session, check the logs for more details.');
+                console.error('Error starting the debug session', e);
+                throw e;
+            }
+        });
     }
 
     protected async fireWillStartDebugSession(): Promise<void> {
@@ -167,7 +201,10 @@ export class DebugSessionManager {
         }
         const { workspaceFolderUri } = options;
         const resolvedConfiguration = await this.resolveDebugConfiguration(options.configuration, workspaceFolderUri);
-        const configuration = await this.variableResolver.resolve(resolvedConfiguration);
+        const configuration = await this.variableResolver.resolve(resolvedConfiguration, {
+            context: options.workspaceFolderUri ? new URI(options.workspaceFolderUri) : undefined,
+            configurationSection: 'launch'
+        });
         const key = configuration.name + workspaceFolderUri;
         const id = this.configurationIds.has(key) ? this.configurationIds.get(key)! + 1 : 0;
         this.configurationIds.set(key, id);
@@ -206,12 +243,14 @@ export class DebugSessionManager {
             this.updateCurrentSession(session);
         });
         session.onDidChangeBreakpoints(uri => this.fireDidChangeBreakpoints({ session, uri }));
-        session.on('terminated', event => {
+        session.on('terminated', async event => {
             const restart = event.body && event.body.restart;
             if (restart) {
+                // postDebugTask isn't run in case of auto restart as well as preLaunchTask
                 this.doRestart(session, restart);
             } else {
                 session.terminate();
+                await this.runTask(session.options.workspaceFolderUri, session.configuration.postDebugTask);
             }
         });
         session.on('exited', () => this.destroy(session.id));
@@ -231,7 +270,7 @@ export class DebugSessionManager {
         if (await session.restart()) {
             return session;
         }
-        await session.terminate(!!restart);
+        await session.terminate(true);
         const { options, configuration } = session;
         configuration.__restart = restart;
         return this.start(options);
@@ -366,4 +405,54 @@ export class DebugSessionManager {
         return origin && new DebugBreakpoint(origin, this.labelProvider, this.breakpoints, this.editorManager);
     }
 
+    /**
+     * Runs the given tasks.
+     * @param taskName the task name to run, see [TaskNameResolver](#TaskNameResolver)
+     * @return true if it allowed to continue debugging otherwise it returns false
+     */
+    protected async runTask(workspaceFolderUri: string | undefined, taskName: string | undefined, checkErrors?: boolean): Promise<boolean> {
+        if (!taskName) {
+            return true;
+        }
+
+        const taskInfo = await this.taskService.runWorkspaceTask(workspaceFolderUri, taskName);
+        if (!checkErrors) {
+            return true;
+        }
+
+        if (!taskInfo) {
+            return this.doPostTaskAction(`Could not run the task '${taskName}'.`);
+        }
+
+        const code = await this.taskService.getExitCode(taskInfo.taskId);
+        if (code === 0) {
+            return true;
+        } else if (code !== undefined) {
+            return this.doPostTaskAction(`Task '${taskName}' terminated with exit code ${code}.`);
+        } else {
+            const signal = await this.taskService.getTerminateSignal(taskInfo.taskId);
+            if (signal !== undefined) {
+                return this.doPostTaskAction(`Task '${taskName}' terminated by signal ${signal}.`);
+            } else {
+                return this.doPostTaskAction(`Task '${taskName}' terminated for unknown reason.`);
+            }
+        }
+    }
+
+    protected async doPostTaskAction(errorMessage: string): Promise<boolean> {
+        const actions = ['Open launch.json', 'Cancel', 'Configure Task', 'Debug Anyway'];
+        const result = await this.messageService.error(errorMessage, ...actions);
+        switch (result) {
+            case actions[0]: // open launch.json
+                this.debugConfigurationManager.openConfiguration();
+                return false;
+            case actions[1]: // cancel
+                return false;
+            case actions[2]: // configure tasks
+                this.quickOpenTask.configure();
+                return false;
+            default: // continue debugging
+                return true;
+        }
+    }
 }

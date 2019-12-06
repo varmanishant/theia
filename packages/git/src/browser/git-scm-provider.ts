@@ -396,11 +396,12 @@ export class GitAmendSupport implements ScmAmendSupport {
 
     constructor(protected readonly repository: Repository, protected readonly git: Git) { }
 
-    public async getInitialAmendingCommits(amendingHeadCommitSha: string, latestCommitSha: string): Promise<ScmCommit[]> {
+    public async getInitialAmendingCommits(amendingHeadCommitSha: string, latestCommitSha: string | undefined): Promise<ScmCommit[]> {
         const commits = await this.git.log(
             this.repository,
             {
                 range: { toRevision: amendingHeadCommitSha, fromRevision: latestCommitSha },
+                firstParent: true,
                 maxCount: 50
             }
         );
@@ -413,7 +414,16 @@ export class GitAmendSupport implements ScmAmendSupport {
     }
 
     public async reset(commit: string): Promise<void> {
-        await this.git.exec(this.repository, ['reset', commit, '--soft']);
+        if (commit === 'HEAD~' && await this.isHeadInitialCommit()) {
+            await this.git.exec(this.repository, ['update-ref', '-d', 'HEAD']);
+        } else {
+            await this.git.exec(this.repository, ['reset', commit, '--soft']);
+        }
+    }
+
+    protected async isHeadInitialCommit(): Promise<boolean> {
+        const result = await this.git.revParse(this.repository, { ref: 'HEAD~' });
+        return !result;
     }
 
     public async getLastCommit(): Promise<ScmCommit | undefined> {

@@ -18,10 +18,10 @@ import { injectable, inject, postConstruct } from 'inversify';
 import { AbstractViewContribution } from '@theia/core/lib/browser/shell/view-contribution';
 import {
     Navigatable, SelectableTreeNode, Widget, KeybindingRegistry, CommonCommands,
-    OpenerService, FrontendApplicationContribution, FrontendApplication, CompositeTreeNode
+    OpenerService, FrontendApplicationContribution, FrontendApplication, CompositeTreeNode, PreferenceScope
 } from '@theia/core/lib/browser';
 import { FileDownloadCommands } from '@theia/filesystem/lib/browser/download/file-download-command-contribution';
-import { CommandRegistry, MenuModelRegistry, MenuPath, isOSX, Command, DisposableCollection } from '@theia/core/lib/common';
+import { CommandRegistry, MenuModelRegistry, MenuPath, isOSX, Command, DisposableCollection, Mutable } from '@theia/core/lib/common';
 import { SHELL_TABBAR_CONTEXT_MENU } from '@theia/core/lib/browser';
 import { WorkspaceCommands, WorkspaceService, WorkspacePreferences } from '@theia/workspace/lib/browser';
 import { FILE_NAVIGATOR_ID, FileNavigatorWidget, EXPLORER_VIEW_CONTAINER_ID } from './navigator-widget';
@@ -30,10 +30,11 @@ import { NavigatorKeybindingContexts } from './navigator-keybinding-context';
 import { FileNavigatorFilter } from './navigator-filter';
 import { WorkspaceNode } from './navigator-tree';
 import { NavigatorContextKeyService } from './navigator-context-key-service';
-import { TabBarToolbarContribution, TabBarToolbarRegistry } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
+import { TabBarToolbarContribution, TabBarToolbarRegistry, TabBarToolbarItem } from '@theia/core/lib/browser/shell/tab-bar-toolbar';
 import { FileSystemCommands } from '@theia/filesystem/lib/browser/filesystem-frontend-contribution';
 import { NavigatorDiff, NavigatorDiffCommands } from './navigator-diff';
 import { UriSelection } from '@theia/core/lib/common/selection';
+import { PreferenceService } from '@theia/core/lib/browser';
 
 export namespace FileNavigatorCommands {
     export const REVEAL_IN_NAVIGATOR: Command = {
@@ -44,6 +45,17 @@ export namespace FileNavigatorCommands {
         id: 'navigator.toggle.hidden.files',
         label: 'Toggle Hidden Files'
     };
+    export const TOGGLE_AUTO_REVEAL: Command = {
+        id: 'navigator.toggle.autoReveal',
+        category: 'File',
+        label: 'Auto Reveal'
+    };
+    export const REFRESH_NAVIGATOR: Command = {
+        id: 'navigator.refresh',
+        category: 'File',
+        label: 'Refresh in Explorer',
+        iconClass: 'refresh'
+    };
     export const COLLAPSE_ALL: Command = {
         id: 'navigator.collapse.all',
         category: 'File',
@@ -53,6 +65,16 @@ export namespace FileNavigatorCommands {
     export const ADD_ROOT_FOLDER: Command = {
         id: 'navigator.addRootFolder'
     };
+}
+
+/**
+ * Navigator `More Actions...` toolbar item groups.
+ * Used in order to group items present in the toolbar.
+ */
+export namespace NavigatorMoreToolbarGroups {
+    export const NEW_OPEN = '1_navigator_new_open';
+    export const TOOLS = '2_navigator_tools';
+    export const WORKSPACE = '3_navigator_workspace';
 }
 
 export const NAVIGATOR_CONTEXT_MENU: MenuPath = ['navigator-context-menu'];
@@ -89,6 +111,12 @@ export namespace NavigatorContextMenu {
 @injectable()
 export class FileNavigatorContribution extends AbstractViewContribution<FileNavigatorWidget> implements FrontendApplicationContribution, TabBarToolbarContribution {
 
+    @inject(CommandRegistry)
+    protected readonly commandRegistry: CommandRegistry;
+
+    @inject(TabBarToolbarRegistry)
+    protected readonly tabbarToolbarRegistry: TabBarToolbarRegistry;
+
     @inject(NavigatorContextKeyService)
     protected readonly contextKeyService: NavigatorContextKeyService;
 
@@ -97,6 +125,9 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
 
     @inject(NavigatorDiff)
     protected readonly navigatorDiff: NavigatorDiff;
+
+    @inject(PreferenceService)
+    protected readonly preferenceService: PreferenceService;
 
     constructor(
         @inject(FileNavigatorPreferences) protected readonly fileNavigatorPreferences: FileNavigatorPreferences,
@@ -156,8 +187,25 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
             isEnabled: () => true,
             isVisible: () => true
         });
+        registry.registerCommand(FileNavigatorCommands.TOGGLE_AUTO_REVEAL, {
+            isEnabled: widget => this.withWidget(widget, () => this.workspaceService.opened),
+            isVisible: widget => this.withWidget(widget, () => this.workspaceService.opened),
+            execute: () => {
+                const autoReveal = !this.fileNavigatorPreferences['explorer.autoReveal'];
+                this.preferenceService.set('explorer.autoReveal', autoReveal, PreferenceScope.User);
+                if (autoReveal) {
+                    this.selectWidgetFileNode(this.shell.currentWidget);
+                }
+            },
+            isToggled: () => this.fileNavigatorPreferences['explorer.autoReveal']
+        });
         registry.registerCommand(FileNavigatorCommands.COLLAPSE_ALL, {
             execute: widget => this.withWidget(widget, () => this.collapseFileNavigatorTree()),
+            isEnabled: widget => this.withWidget(widget, () => this.workspaceService.opened),
+            isVisible: widget => this.withWidget(widget, () => this.workspaceService.opened)
+        });
+        registry.registerCommand(FileNavigatorCommands.REFRESH_NAVIGATOR, {
+            execute: widget => this.withWidget(widget, () => this.refreshWorkspace()),
             isEnabled: widget => this.withWidget(widget, () => this.workspaceService.opened),
             isVisible: widget => this.withWidget(widget, () => this.workspaceService.opened)
         });
@@ -318,11 +366,62 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
 
     async registerToolbarItems(toolbarRegistry: TabBarToolbarRegistry): Promise<void> {
         toolbarRegistry.registerItem({
+            id: FileNavigatorCommands.REFRESH_NAVIGATOR.id,
+            command: FileNavigatorCommands.REFRESH_NAVIGATOR.id,
+            tooltip: 'Refresh Explorer',
+            priority: 0,
+        });
+        toolbarRegistry.registerItem({
             id: FileNavigatorCommands.COLLAPSE_ALL.id,
             command: FileNavigatorCommands.COLLAPSE_ALL.id,
             tooltip: 'Collapse All',
-            priority: 0,
+            priority: 1,
         });
+        this.registerMoreToolbarItem({
+            id: WorkspaceCommands.NEW_FILE.id,
+            command: WorkspaceCommands.NEW_FILE.id,
+            tooltip: WorkspaceCommands.NEW_FILE.label,
+            group: NavigatorMoreToolbarGroups.NEW_OPEN,
+        });
+        this.registerMoreToolbarItem({
+            id: WorkspaceCommands.NEW_FOLDER.id,
+            command: WorkspaceCommands.NEW_FOLDER.id,
+            tooltip: WorkspaceCommands.NEW_FOLDER.label,
+            group: NavigatorMoreToolbarGroups.NEW_OPEN,
+        });
+        this.registerMoreToolbarItem({
+            id: FileNavigatorCommands.TOGGLE_AUTO_REVEAL.id,
+            command: FileNavigatorCommands.TOGGLE_AUTO_REVEAL.id,
+            tooltip: FileNavigatorCommands.TOGGLE_AUTO_REVEAL.label,
+            group: NavigatorMoreToolbarGroups.TOOLS,
+        });
+        this.registerMoreToolbarItem({
+            id: WorkspaceCommands.ADD_FOLDER.id,
+            command: WorkspaceCommands.ADD_FOLDER.id,
+            tooltip: WorkspaceCommands.ADD_FOLDER.label,
+            group: NavigatorMoreToolbarGroups.WORKSPACE,
+        });
+    }
+
+    /**
+     * Register commands to the `More Actions...` navigator toolbar item.
+     */
+    public registerMoreToolbarItem = (item: Mutable<TabBarToolbarItem>) => {
+        const commandId = item.command;
+        const id = 'navigator.tabbar.toolbar.' + commandId;
+        const command = this.commandRegistry.getCommand(commandId);
+        this.commandRegistry.registerCommand({ id, iconClass: command && command.iconClass }, {
+            execute: (w, ...args) => w instanceof FileNavigatorWidget
+                && this.commandRegistry.executeCommand(commandId, ...args),
+            isEnabled: (w, ...args) => w instanceof FileNavigatorWidget
+                && this.commandRegistry.isEnabled(commandId, ...args),
+            isVisible: (w, ...args) => w instanceof FileNavigatorWidget
+                && this.commandRegistry.isVisible(commandId, ...args),
+            isToggled: (w, ...args) => w instanceof FileNavigatorWidget
+                && this.commandRegistry.isToggled(commandId, ...args),
+        });
+        item.command = id;
+        this.tabbarToolbarRegistry.registerItem(item);
     }
 
     /**
@@ -345,7 +444,7 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
     }
 
     protected onCurrentWidgetChangedHandler(): void {
-        if (this.fileNavigatorPreferences['navigator.autoReveal']) {
+        if (this.fileNavigatorPreferences['explorer.autoReveal']) {
             this.selectWidgetFileNode(this.shell.currentWidget);
         }
     }
@@ -371,6 +470,14 @@ export class FileNavigatorContribution extends AbstractViewContribution<FileNavi
         if (SelectableTreeNode.is(firstChild)) {
             model.selectNode(firstChild);
         }
+    }
+
+    /**
+     * force refresh workspace in navigator
+     */
+    async refreshWorkspace(): Promise<void> {
+        const { model } = await this.widget;
+        await model.refresh();
     }
 
     private readonly toDisposeAddRemoveFolderActions = new DisposableCollection();

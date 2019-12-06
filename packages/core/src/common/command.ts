@@ -136,7 +136,7 @@ export interface CommandService {
     // tslint:disable-next-line:no-any
     executeCommand<T>(command: string, ...args: any[]): Promise<T | undefined>;
     /**
-     * An event is emmited when a command is about to be executed.
+     * An event is emitted when a command is about to be executed.
      *
      * It can be used to install or activate a command handler.
      */
@@ -244,7 +244,7 @@ export class CommandRegistry implements CommandService {
      */
     // tslint:disable-next-line:no-any
     isEnabled(command: string, ...args: any[]): boolean {
-        return this.getActiveHandler(command, ...args) !== undefined;
+        return typeof this.getActiveHandler(command, ...args) !== 'undefined';
     }
 
     /**
@@ -252,7 +252,7 @@ export class CommandRegistry implements CommandService {
      */
     // tslint:disable-next-line:no-any
     isVisible(command: string, ...args: any[]): boolean {
-        return this.getVisibleHandler(command, ...args) !== undefined;
+        return typeof this.getVisibleHandler(command, ...args) !== 'undefined';
     }
 
     /**
@@ -260,8 +260,7 @@ export class CommandRegistry implements CommandService {
      */
     // tslint:disable-next-line:no-any
     isToggled(command: string, ...args: any[]): boolean {
-        const handler = this.getToggledHandler(command);
-        return handler && handler.isToggled ? handler.isToggled(...args) : false;
+        return typeof this.getToggledHandler(command, ...args) !== 'undefined';
     }
 
     /**
@@ -297,8 +296,12 @@ export class CommandRegistry implements CommandService {
         const handlers = this._handlers[commandId];
         if (handlers) {
             for (const handler of handlers) {
-                if (!handler.isVisible || handler.isVisible(...args)) {
-                    return handler;
+                try {
+                    if (!handler.isVisible || handler.isVisible(...args)) {
+                        return handler;
+                    }
+                } catch (error) {
+                    console.error(error);
                 }
             }
         }
@@ -313,8 +316,12 @@ export class CommandRegistry implements CommandService {
         const handlers = this._handlers[commandId];
         if (handlers) {
             for (const handler of handlers) {
-                if (!handler.isEnabled || handler.isEnabled(...args)) {
-                    return handler;
+                try {
+                    if (!handler.isEnabled || handler.isEnabled(...args)) {
+                        return handler;
+                    }
+                } catch (error) {
+                    console.error(error);
                 }
             }
         }
@@ -324,16 +331,30 @@ export class CommandRegistry implements CommandService {
     /**
      * Get a toggled handler for the given command or `undefined`.
      */
-    getToggledHandler(commandId: string): CommandHandler | undefined {
+    // tslint:disable-next-line:no-any
+    getToggledHandler(commandId: string, ...args: any[]): CommandHandler | undefined {
         const handlers = this._handlers[commandId];
         if (handlers) {
             for (const handler of handlers) {
-                if (handler.isToggled) {
-                    return handler;
+                try {
+                    if (handler.isToggled && handler.isToggled(...args)) {
+                        return handler;
+                    }
+                } catch (error) {
+                    console.error(error);
                 }
             }
         }
         return undefined;
+    }
+
+    /**
+     * Returns with all handlers for the given command. If the command does not have any handlers,
+     * or the command is not registered, returns an empty array.
+     */
+    getAllHandlers(commandId: string): CommandHandler[] {
+        const handlers = this._handlers[commandId];
+        return handlers ? handlers.slice() : [];
     }
 
     /**

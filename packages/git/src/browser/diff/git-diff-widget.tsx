@@ -16,15 +16,16 @@
 
 import { inject, injectable, postConstruct } from 'inversify';
 import URI from '@theia/core/lib/common/uri';
-import { StatefulWidget, SELECTED_CLASS, DiffUris } from '@theia/core/lib/browser';
+import { StatefulWidget, SELECTED_CLASS, DiffUris, Message } from '@theia/core/lib/browser';
 import { EditorManager, EditorOpenerOptions, EditorWidget, DiffNavigatorProvider, DiffNavigator } from '@theia/editor/lib/browser';
 import { GitFileChange, GitFileStatus, Git, WorkingDirectoryStatus } from '../../common';
 import { GitWatcher } from '../../common';
 import { GIT_RESOURCE_SCHEME } from '../git-resource';
 import { GitNavigableListWidget } from '../git-navigable-list-widget';
 import { GitFileChangeNode } from '../git-file-change-node';
-import { Message } from '@phosphor/messaging';
+import { Deferred } from '@theia/core/lib/common/promise-util';
 import * as React from 'react';
+import { MaybePromise } from '@theia/core/lib/common/types';
 
 // tslint:disable:no-null-keyword
 
@@ -40,6 +41,8 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
     protected gitStatus?: WorkingDirectoryStatus;
 
     protected listView?: GitDiffListContainer;
+
+    protected deferredListContainer = new Deferred<HTMLElement>();
 
     @inject(Git) protected readonly git: Git;
     @inject(DiffNavigatorProvider) protected readonly diffNavigatorProvider: DiffNavigatorProvider;
@@ -65,6 +68,16 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
                 this.setContent(this.options);
             }
         }));
+        this.toDispose.push(this.labelProvider.onDidChange(event => {
+            const affectsFiles = this.fileChangeNodes.some(node => event.affects(new URI(node.uri)));
+            if (this.options && affectsFiles) {
+                this.setContent(this.options);
+            }
+        }));
+    }
+
+    protected getScrollContainer(): MaybePromise<HTMLElement> {
+        return this.deferredListContainer.promise;
     }
 
     protected get toRevision(): string | undefined {
@@ -153,6 +166,7 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
 
     protected renderPathHeader(): React.ReactNode {
         return this.renderHeaderRow({
+            classNames: ['diff-header'],
             name: 'path',
             value: this.renderPath()
         });
@@ -171,6 +185,7 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
 
     protected renderRevisionHeader(): React.ReactNode {
         return this.renderHeaderRow({
+            classNames: ['diff-header'],
             name: 'revision: ',
             value: this.renderRevision()
         });
@@ -193,7 +208,7 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
     }
     protected doRenderToolbar(...children: React.ReactNode[]): React.ReactNode {
         return this.renderHeaderRow({
-            classNames: ['space-between'],
+            classNames: ['diff-nav', 'space-between'],
             name: 'Files changed',
             value: <div className='lrBtns'>{...children}</div>
         });
@@ -230,8 +245,11 @@ export class GitDiffWidget extends GitNavigableListWidget<GitFileChangeNode> imp
             ref={ref => this.listView = ref || undefined}
             id={this.scrollContainer}
             files={files}
-            addDiffListKeyListeners={this.addGitDiffListKeyListeners} />;
+            addDiffListKeyListeners={this.addGitDiffListKeyListeners}
+            setListContainer={this.setListContainer} />;
     }
+
+    protected setListContainer = (listContainerElement: HTMLDivElement) => this.deferredListContainer.resolve(listContainerElement);
 
     protected addGitDiffListKeyListeners = (id: string) => this.doAddGitDiffListKeyListeners(id);
     protected doAddGitDiffListKeyListeners(id: string): void {
@@ -398,6 +416,7 @@ export namespace GitDiffListContainer {
         id: string
         files: React.ReactNode[]
         addDiffListKeyListeners: (id: string) => void
+        setListContainer: (listContainer: HTMLDivElement) => void
     }
 }
 
@@ -411,11 +430,14 @@ export class GitDiffListContainer extends React.Component<GitDiffListContainer.P
 
     componentDidMount(): void {
         this.props.addDiffListKeyListeners(this.props.id);
+        if (this.listContainer) {
+            this.props.setListContainer(this.listContainer);
+        }
     }
 
     focus(): void {
         if (this.listContainer) {
-            this.listContainer.focus();
+            this.listContainer.focus({ preventScroll: true });
         }
     }
 }

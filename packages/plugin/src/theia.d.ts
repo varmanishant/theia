@@ -653,6 +653,24 @@ declare module '@theia/plugin' {
     }
 
     /**
+     * The declaration provider interface defines the contract between extensions and
+     * the [go to declaration](https://code.visualstudio.com/api/references/vscode-api#DeclarationProvider)
+     * feature.
+     */
+    export interface DeclarationProvider {
+        /**
+         * Provide the declaration of the symbol at the given position and document.
+         *
+         * @param document The document in which the command was invoked.
+         * @param position The position at which the command was invoked.
+         * @param token A cancellation token.
+         * @return A declaration or a thenable that resolves to such. The lack of a result can be
+         * signaled by returning `undefined` or `null`.
+         */
+        provideDeclaration(document: TextDocument, position: Position, token: CancellationToken | undefined): ProviderResult<Definition | DefinitionLink[]>;
+    }
+
+    /**
      * The implementation provider interface defines the contract between extensions and
      * the go to implementation feature.
      */
@@ -1973,6 +1991,16 @@ declare module '@theia/plugin' {
          * not implemented yet
          */
         picked?: boolean;
+
+        /**
+         * Used to display the group label in the right corner of item
+         */
+        groupLabel?: string;
+
+        /**
+         * Used to display border after item
+         */
+        showBorder?: boolean;
     }
 
     /**
@@ -2173,6 +2201,11 @@ declare module '@theia/plugin' {
          * Return `undefined`, or the empty string when 'value' is valid.
          */
         validateInput?(value: string): string | undefined | PromiseLike<string | undefined>;
+
+        /**
+         * An optional function that will be called on Enter key.
+         */
+        onAccept?(): void;
     }
 
     /**
@@ -2513,6 +2546,17 @@ declare module '@theia/plugin' {
     }
 
     /**
+     * Options to configure the behaviour of a file upload dialog.
+     */
+    export interface UploadDialogOptions {
+
+        /**
+         * The resource, where files should be uploaded.
+         */
+        defaultUri?: Uri;
+    }
+
+    /**
      * Definition of the terminal emulator.
      */
     export interface Terminal {
@@ -2626,11 +2670,6 @@ declare module '@theia/plugin' {
         asAbsolutePath(relativePath: string): string;
 
         /**
-         * Return log path for current of the extension.
-         */
-        logPath: string;
-
-        /**
         * An absolute file path of a workspace specific directory in which the extension
         * can store private state. The directory might not exist on disk and creation is
         * up to the extension. However, the parent directory is guaranteed to be existent.
@@ -2639,6 +2678,22 @@ declare module '@theia/plugin' {
         * [`globalState`](#ExtensionContext.globalState) to store key value data.
         */
         storagePath: string | undefined;
+
+        /**
+         * An absolute file path in which the extension can store global state.
+         * The directory might not exist on disk and creation is
+         * up to the extension. However, the parent directory is guaranteed to be existent.
+         *
+         * Use [`globalState`](#ExtensionContext.globalState) to store key value data.
+         */
+        readonly globalStoragePath: string;
+
+        /**
+         * An absolute file path of a directory in which the extension can create log files.
+         * The directory might not exist on disk and creation is up to the extension. However,
+         * the parent directory is guaranteed to be existent.
+         */
+        readonly logPath: string;
     }
 
     /**
@@ -2675,6 +2730,21 @@ declare module '@theia/plugin' {
     }
 
     /**
+     * Defines a port mapping used for localhost inside the webview.
+     */
+    export interface WebviewPortMapping {
+        /**
+         * Localhost port to remap inside the webview.
+         */
+        readonly webviewPort: number;
+
+        /**
+         * Destination port. The `webviewPort` is resolved to this port.
+         */
+        readonly extensionHostPort: number;
+    }
+
+    /**
      * Content settings for a webview.
      */
     export interface WebviewOptions {
@@ -2700,6 +2770,21 @@ declare module '@theia/plugin' {
          * Pass in an empty array to disallow access to any local resources.
          */
         readonly localResourceRoots?: ReadonlyArray<Uri>;
+
+        /**
+         * Mappings of localhost ports used inside the webview.
+         *
+         * Port mapping allow webviews to transparently define how localhost ports are resolved. This can be used
+         * to allow using a static localhost port inside the webview that is resolved to random port that a service is
+         * running on.
+         *
+         * If a webview accesses localhost content, we recommend that you specify port mappings even if
+         * the `webviewPort` and `extensionHostPort` ports are the same.
+         *
+         * *Note* that port mappings only work for `http` or `https` urls. Websocket urls (e.g. `ws://localhost:3000`)
+         * cannot be mapped to another port.
+         */
+        readonly portMapping?: ReadonlyArray<WebviewPortMapping>;
     }
 
     /**
@@ -2731,6 +2816,30 @@ declare module '@theia/plugin' {
          * @param message Body of the message.
          */
         postMessage(message: any): PromiseLike<boolean>;
+
+        /**
+         * Convert a uri for the local file system to one that can be used inside webviews.
+         *
+         * Webviews cannot directly load resources from the workspace or local file system using `file:` uris. The
+         * `asWebviewUri` function takes a local `file:` uri and converts it into a uri that can be used inside of
+         * a webview to load the same resource:
+         *
+         * ```ts
+         * webview.html = `<img src="${webview.asWebviewUri(vscode.Uri.file('/Users/codey/workspace/cat.gif'))}">`
+         * ```
+         */
+        asWebviewUri(localResource: Uri): Uri;
+
+        /**
+         * Content security policy source for webview resources.
+         *
+         * This is the origin that should be used in a content security policy rule:
+         *
+         * ```
+         * img-src https: ${webview.cspSource} ...;
+         * ```
+         */
+        readonly cspSource: string;
     }
 
     /**
@@ -2944,6 +3053,24 @@ declare module '@theia/plugin' {
          * @return PromiseLike indicating that the webview has been fully restored.
          */
         deserializeWebviewPanel(webviewPanel: WebviewPanel, state: any): PromiseLike<void>;
+    }
+
+    /**
+     * The clipboard provides read and write access to the system's clipboard.
+     */
+    export interface Clipboard {
+
+        /**
+         * Read the current clipboard contents as text.
+         * @returns A thenable that resolves to a string.
+         */
+        readText(): PromiseLike<string>;
+
+        /**
+         * Writes text into the clipboard.
+         * @returns A thenable that resolves when writing happened.
+         */
+        writeText(value: string): PromiseLike<void>;
     }
 
     /**
@@ -3262,6 +3389,15 @@ declare module '@theia/plugin' {
         export function showSaveDialog(options: SaveDialogOptions): PromiseLike<Uri | undefined>;
 
         /**
+         * Shows a file upload dialog to the user which allows to upload files
+         * for various purposes.
+         * 
+         * @param options Options, that control the dialog.
+         * @returns A promise that resolves the paths of uploaded files or `undefined`.
+         */
+        export function showUploadDialog(options: UploadDialogOptions): PromiseLike<Uri[] | undefined>;
+
+        /**
          * Create and show a new webview panel.
          *
          * @param viewType Identifies the type of the webview panel.
@@ -3436,6 +3572,197 @@ declare module '@theia/plugin' {
          * @return The thenable the task-callback returned.
          */
         export function withProgress<R>(options: ProgressOptions, task: (progress: Progress<{ message?: string; increment?: number }>, token: CancellationToken) => PromiseLike<R>): PromiseLike<R>;
+
+        /**
+         * Creates a [InputBox](#InputBox) to let the user enter some text input.
+         *
+         * Note that in many cases the more convenient [window.showInputBox](#window.showInputBox)
+         * is easier to use. [window.createInputBox](#window.createInputBox) should be used
+         * when [window.showInputBox](#window.showInputBox) does not offer the required flexibility.
+         *
+         * @return A new [InputBox](#InputBox).
+         */
+        export function createInputBox(): InputBox;
+    }
+
+    /**
+     * Predefined buttons for [QuickPick](#QuickPick) and [InputBox](#InputBox).
+     */
+    export class QuickInputButtons {
+
+        /**
+         * A back button for [QuickPick](#QuickPick) and [InputBox](#InputBox).
+         *
+         * When a navigation 'back' button is needed this one should be used for consistency.
+         * It comes with a predefined icon, tooltip and location.
+         */
+        static readonly Back: QuickInputButton;
+
+        /**
+         * @hidden
+         */
+        private constructor();
+    }
+
+    /**
+     * A concrete [QuickInput](#QuickInput) to let the user input a text value.
+     *
+     * Note that in many cases the more convenient [window.showInputBox](#window.showInputBox)
+     * is easier to use. [window.createInputBox](#window.createInputBox) should be used
+     * when [window.showInputBox](#window.showInputBox) does not offer the required flexibility.
+     */
+    export interface InputBox extends QuickInput {
+
+        /**
+         * Current input value.
+         */
+        value: string;
+
+        /**
+         * Optional placeholder in the filter text.
+         */
+        placeholder: string | undefined;
+
+        /**
+         * If the input value should be hidden. Defaults to false.
+         */
+        password: boolean;
+
+        /**
+         * An event signaling when the value has changed.
+         */
+        readonly onDidChangeValue: Event<string>;
+
+        /**
+         * An event signaling when the user indicated acceptance of the input value.
+         */
+        readonly onDidAccept: Event<void>;
+
+        /**
+         * Buttons for actions in the UI.
+         */
+        buttons: ReadonlyArray<QuickInputButton>;
+
+        /**
+         * An event signaling when a button was triggered.
+         */
+        readonly onDidTriggerButton: Event<QuickInputButton>;
+
+        /**
+         * An optional prompt text providing some ask or explanation to the user.
+         */
+        prompt: string | undefined;
+
+        /**
+         * An optional validation message indicating a problem with the current input value.
+         */
+        validationMessage: string | undefined;
+    }
+
+    /**
+     * A light-weight user input UI that is initially not visible. After
+     * configuring it through its properties the extension can make it
+     * visible by calling [QuickInput.show](#QuickInput.show).
+     *
+     * There are several reasons why this UI might have to be hidden and
+     * the extension will be notified through [QuickInput.onDidHide](#QuickInput.onDidHide).
+     * (Examples include: an explicit call to [QuickInput.hide](#QuickInput.hide),
+     * the user pressing Esc, some other input UI opening, etc.)
+     *
+     * A user pressing Enter or some other gesture implying acceptance
+     * of the current state does not automatically hide this UI component.
+     * It is up to the extension to decide whether to accept the user's input
+     * and if the UI should indeed be hidden through a call to [QuickInput.hide](#QuickInput.hide).
+     *
+     * When the extension no longer needs this input UI, it should
+     * [QuickInput.dispose](#QuickInput.dispose) it to allow for freeing up
+     * any resources associated with it.
+     *
+     * See [QuickPick](#QuickPick) and [InputBox](#InputBox) for concrete UIs.
+     */
+    export interface QuickInput {
+
+        /**
+         * An optional title.
+         */
+        title: string | undefined;
+
+        /**
+         * An optional current step count.
+         */
+        step: number | undefined;
+
+        /**
+         * An optional total step count.
+         */
+        totalSteps: number | undefined;
+
+        /**
+         * If the UI should allow for user input. Defaults to true.
+         *
+         * Change this to false, e.g., while validating user input or
+         * loading data for the next step in user input.
+         */
+        enabled: boolean;
+
+        /**
+         * If the UI should show a progress indicator. Defaults to false.
+         *
+         * Change this to true, e.g., while loading more data or validating
+         * user input.
+         */
+        busy: boolean;
+
+        /**
+         * If the UI should stay open even when loosing UI focus. Defaults to false.
+         */
+        ignoreFocusOut: boolean;
+
+        /**
+         * Makes the input UI visible in its current configuration. Any other input
+         * UI will first fire an [QuickInput.onDidHide](#QuickInput.onDidHide) event.
+         */
+        show(): void;
+
+        /**
+         * Hides this input UI. This will also fire an [QuickInput.onDidHide](#QuickInput.onDidHide)
+         * event.
+         */
+        hide(): void;
+
+        /**
+         * An event signaling when this input UI is hidden.
+         *
+         * There are several reasons why this UI might have to be hidden and
+         * the extension will be notified through [QuickInput.onDidHide](#QuickInput.onDidHide).
+         * (Examples include: an explicit call to [QuickInput.hide](#QuickInput.hide),
+         * the user pressing Esc, some other input UI opening, etc.)
+         */
+        onDidHide: Event<void>;
+
+        /**
+         * Dispose of this input UI and any associated resources. If it is still
+         * visible, it is first hidden. After this call the input UI is no longer
+         * functional and no additional methods or properties on it should be
+         * accessed. Instead a new input UI should be created.
+         */
+        dispose(): void;
+    }
+
+    /**
+     * Button for an action in a [QuickPick](#QuickPick) or [InputBox](#InputBox).
+     */
+    export interface QuickInputButton {
+
+        /**
+         * Icon for the button.
+         */
+        readonly iconPath: Uri | { light: Uri; dark: Uri } | ThemeIcon;
+
+        /**
+         * An optional tooltip.
+         */
+        readonly tooltip?: string | undefined;
     }
     /**
      * Value-object describing where and how progress should show.
@@ -3518,6 +3845,30 @@ declare module '@theia/plugin' {
     }
 
     /**
+     * The event that is fired when there is a change in [tree view's selection](#TreeView.selection)
+     */
+    export interface TreeViewSelectionChangeEvent<T> {
+
+        /**
+         * Selected elements.
+         */
+        readonly selection: T[];
+
+    }
+
+    /**
+     * The event that is fired when there is a change in [tree view's visibility](#TreeView.visible)
+     */
+    export interface TreeViewVisibilityChangeEvent {
+
+        /**
+         * `true` if the [tree view](#TreeView) is visible otherwise `false`.
+         */
+        readonly visible: boolean;
+
+    }
+
+    /**
      * Represents a Tree view
      */
     export interface TreeView<T> extends Disposable {
@@ -3536,6 +3887,21 @@ declare module '@theia/plugin' {
          * Currently selected elements.
          */
         readonly selection: ReadonlyArray<T>;
+
+        /**
+         * Event that is fired when the [selection](#TreeView.selection) has changed
+         */
+        readonly onDidChangeSelection: Event<TreeViewSelectionChangeEvent<T>>;
+
+        /**
+         * `true` if the [tree view](#TreeView) is visible otherwise `false`.
+         */
+        readonly visible: boolean;
+
+        /**
+         * Event that is fired when [visibility](#TreeView.visible) has changed
+         */
+        readonly onDidChangeVisibility: Event<TreeViewVisibilityChangeEvent>;
 
         /**
          * Reveal an element. By default revealed element is selected.
@@ -3605,6 +3971,12 @@ declare module '@theia/plugin' {
          * When a [ThemeIcon](#ThemeIcon) is specified, icon is derived from the current file icon theme for the specified theme icon using [resourceUri](#TreeItem.resourceUri) (if provided).
          */
         iconPath?: string | Uri | { light: string | Uri; dark: string | Uri } | ThemeIcon;
+
+        /**
+         * A human readable string which is rendered less prominent.
+         * When `true`, it is derived from [resourceUri](#TreeItem.resourceUri) and when `falsy`, it is not shown.
+         */
+        description?: string | boolean;
 
         /**
          * The [uri](#Uri) of the resource representing this item.
@@ -3917,11 +4289,11 @@ declare module '@theia/plugin' {
     }
 
     /**
-	 * A type that filesystem providers should use to signal errors.
-	 *
-	 * This class has factory methods for common error-cases, like `EntryNotFound` when
-	 * a file or folder doesn't exist, use them like so: `throw vscode.FileSystemError.EntryNotFound(someUri);`
-	 */
+     * A type that filesystem providers should use to signal errors.
+     *
+     * This class has factory methods for common error-cases, like `EntryNotFound` when
+     * a file or folder doesn't exist, use them like so: `throw vscode.FileSystemError.EntryNotFound(someUri);`
+     */
     export class FileSystemError extends Error {
 
         /**
@@ -4499,6 +4871,16 @@ declare module '@theia/plugin' {
         export const language: string;
 
         /**
+         * The detected default shell for the extension host.
+         */
+        export const shell: string;
+
+        /**
+         * The system clipboard.
+         */
+        export const clipboard: Clipboard;
+
+        /**
          * A unique identifier for the computer.
          */
         export const machineId: string;
@@ -4508,6 +4890,40 @@ declare module '@theia/plugin' {
          * Changes each time the editor is started.
          */
         export const sessionId: string;
+
+        /**
+         * Opens an *external* item, e.g. a http(s) or mailto-link, using the
+         * default application.
+         *
+         * *Note* that [`showTextDocument`](#window.showTextDocument) is the right
+         * way to open a text document inside the editor, not this function.
+         *
+         * @param target The uri that should be opened.
+         * @returns A promise indicating if open was successful.
+         */
+        export function openExternal(target: Uri): PromiseLike<boolean>;
+
+        /**
+         * Resolves an *external* uri, such as a `http:` or `https:` link, from where the extension is running to a
+         * uri to the same resource on the client machine.
+         *
+         * This is a no-op if the extension is running on the client machine. Currently only supports
+         * `https:` and `http:` uris.
+         *
+         * If the extension is running remotely, this function automatically establishes a port forwarding tunnel
+         * from the local machine to `target` on the remote and returns a local uri to the tunnel. The lifetime of
+         * the port fowarding tunnel is managed by VS Code and the tunnel can be closed by the user.
+         *
+         * Extensions should not cache the result of `asExternalUri` as the resolved uri may become invalid due to
+         * a system or user action — for example, in remote cases, a user may close a port forwardng tunnel
+         * that was opened by `asExternalUri`.
+         *
+         * *Note* that uris passed through `openExternal` are automatically resolved and you should not call `asExternalUri`
+         * on them.
+         *
+         * @return A uri that can be used on the client machine.
+         */
+        export function asExternalUri(target: Uri): PromiseLike<Uri>;
 
     }
 
@@ -4744,7 +5160,7 @@ declare module '@theia/plugin' {
          * The label of this signature. Will be shown in
          * the UI.
          */
-        label: string;
+        label: string | [number, number];
 
         /**
          * The human-readable doc-comment of this signature. Will be shown
@@ -4819,6 +5235,61 @@ declare module '@theia/plugin' {
     }
 
     /**
+     * How a [`SignatureHelpProvider`](#SignatureHelpProvider) was triggered.
+     */
+    export enum SignatureHelpTriggerKind {
+        /**
+         * Signature help was invoked manually by the user or by a command.
+         */
+        Invoke = 1,
+
+        /**
+         * Signature help was triggered by a trigger character.
+         */
+        TriggerCharacter = 2,
+
+        /**
+         * Signature help was triggered by the cursor moving or by the document content changing.
+         */
+        ContentChange = 3,
+    }
+
+    /**
+     * Additional information about the context in which a
+     * [`SignatureHelpProvider`](#SignatureHelpProvider.provideSignatureHelp) was triggered.
+     */
+    export interface SignatureHelpContext {
+        /**
+         * Action that caused signature help to be triggered.
+         */
+        readonly triggerKind: SignatureHelpTriggerKind;
+
+        /**
+         * Character that caused signature help to be triggered.
+         *
+         * This is `undefined` when signature help is not triggered by typing, such as when manually invoking
+         * signature help or when moving the cursor.
+         */
+        readonly triggerCharacter?: string;
+
+        /**
+         * `true` if signature help was already showing when it was triggered.
+         *
+         * Retriggers occur when the signature help is already active and can be caused by actions such as
+         * typing a trigger character, a cursor move, or document content changes.
+         */
+        readonly isRetrigger: boolean;
+
+        /**
+         * The currently active [`SignatureHelp`](#SignatureHelp).
+         *
+         * The `activeSignatureHelp` has its [`SignatureHelp.activeSignature`] field updated based on
+         * the user arrowing through available signatures.
+         */
+        readonly activeSignatureHelp?: SignatureHelp;
+    }
+
+    /**
      * The signature help provider interface defines the contract between extensions and
      * the [parameter hints](https://code.visualstudio.com/docs/editor/intellisense)-feature.
      */
@@ -4830,10 +5301,30 @@ declare module '@theia/plugin' {
          * @param document The document in which the command was invoked.
          * @param position The position at which the command was invoked.
          * @param token A cancellation token.
+         * @param context Information about how signature help was triggered.
+         *
          * @return Signature help or a thenable that resolves to such. The lack of a result can be
          * signaled by returning `undefined` or `null`.
          */
-        provideSignatureHelp(document: TextDocument, position: Position, token: CancellationToken | undefined): ProviderResult<SignatureHelp>;
+        provideSignatureHelp(document: TextDocument, position: Position, token: CancellationToken, context: SignatureHelpContext): ProviderResult<SignatureHelp>;
+    }
+
+    /**
+     * Metadata about a registered [`SignatureHelpProvider`](#SignatureHelpProvider).
+     */
+    export interface SignatureHelpProviderMetadata {
+        /**
+         * List of characters that trigger signature help.
+         */
+        readonly triggerCharacters: ReadonlyArray<string>;
+
+        /**
+         * List of characters that re-trigger signature help.
+         *
+         * These trigger characters are only active when signature help is already showing. All trigger characters
+         * are also counted as re-trigger characters.
+         */
+        readonly retriggerCharacters: ReadonlyArray<string>;
     }
 
     /**
@@ -5452,6 +5943,13 @@ declare module '@theia/plugin' {
          * characters will be ignored.
          */
         commitCharacters?: string[];
+
+        /**
+         * Keep whitespace of the [insertText](#CompletionItem.insertText) as is. By default, the editor adjusts leading
+         * whitespace of new lines so that they match the indentation of the line for which the item is accepted - setting
+         * this to `true` will prevent that.
+         */
+        keepWhitespace?: boolean;
 
         /**
          * An optional array of additional [text edits](#TextEdit) that are applied when
@@ -6497,6 +6995,19 @@ declare module '@theia/plugin' {
         export function registerDefinitionProvider(selector: DocumentSelector, provider: DefinitionProvider): Disposable;
 
         /**
+         * Register a declaration provider.
+         *
+         * Multiple providers can be registered for a language. In that case providers are asked in
+         * parallel and the results are merged. A failing provider (rejected promise or exception) will
+         * not cause a failure of the whole operation.
+         *
+         * @param selector A selector that defines the documents this provider is applicable to.
+         * @param provider A declaration provider.
+         * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
+         */
+        export function registerDeclarationProvider(selector: DocumentSelector, provider: DeclarationProvider): Disposable;
+
+        /**
          * Register a signature help provider.
          *
          * Multiple providers can be registered for a language. In that case providers are sorted
@@ -6506,9 +7017,11 @@ declare module '@theia/plugin' {
          * @param selector A selector that defines the documents this provider is applicable to.
          * @param provider A signature help provider.
          * @param triggerCharacters Trigger signature help when the user types one of the characters, like `,` or `(`.
+         * @param metadata Information about the provider.
          * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
          */
         export function registerSignatureHelpProvider(selector: DocumentSelector, provider: SignatureHelpProvider, ...triggerCharacters: string[]): Disposable;
+        export function registerSignatureHelpProvider(selector: DocumentSelector, provider: SignatureHelpProvider, metadata: SignatureHelpProviderMetadata): Disposable;
 
         /**
          * Register a type definition provider.
@@ -7122,6 +7635,11 @@ declare module '@theia/plugin' {
         readonly name: string;
 
         /**
+         * The "resolved" [debug configuration](#DebugConfiguration) of this session.
+         */
+        readonly configuration: DebugConfiguration;
+
+        /**
          * Send a custom request to the debug adapter.
          */
         customRequest(command: string, args?: any): PromiseLike<any>;
@@ -7178,9 +7696,9 @@ declare module '@theia/plugin' {
         resolveDebugConfiguration?(folder: WorkspaceFolder | undefined, debugConfiguration: DebugConfiguration, token?: CancellationToken): ProviderResult<DebugConfiguration>;
     }
 
-	/**
-	 * A Debug Adapter Tracker is a means to track the communication between VS Code and a Debug Adapter.
-	 */
+    /**
+     * A Debug Adapter Tracker is a means to track the communication between VS Code and a Debug Adapter.
+     */
     export interface DebugAdapterTracker {
         /**
          * A session with the debug adapter is about to be started.
@@ -7252,9 +7770,9 @@ declare module '@theia/plugin' {
         readonly options?: DebugAdapterExecutableOptions;
     }
 
-	/**
-	 * Options for a debug adapter executable.
-	 */
+    /**
+     * Options for a debug adapter executable.
+     */
     export interface DebugAdapterExecutableOptions {
 
         /**
@@ -8006,6 +8524,19 @@ declare module '@theia/plugin' {
         exitCode: number;
     }
 
+    export interface TaskFilter {
+        /**
+         * The task version as used in the tasks.json file.
+         * The string support the package.json semver notation.
+         */
+        version?: string;
+
+        /**
+         * The type of tasks to return.
+         */
+        type?: string;
+    }
+
     export namespace tasks {
 
         /**
@@ -8016,6 +8547,23 @@ declare module '@theia/plugin' {
          * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
          */
         export function registerTaskProvider(type: string, provider: TaskProvider): Disposable;
+
+        /**
+         * Fetches all tasks available in the systems. This includes tasks
+         * from `tasks.json` files as well as tasks from task providers
+         * contributed through extensions and plugins.
+         *
+         * @param filter a filter to filter the return tasks.
+         */
+        export function fetchTasks(filter?: TaskFilter): PromiseLike<Task[]>;
+
+        /**
+         * Executes a task that is managed by VS Code. The returned
+         * task execution can be used to terminate the task.
+         *
+         * @param task the task to execute
+         */
+        export function executeTask(task: Task): PromiseLike<TaskExecution>;
 
         /**
          * The currently active task executions or an empty array.
@@ -8131,20 +8679,20 @@ declare module '@theia/plugin' {
         Expanded = 1
     }
 
-	/**
-	 * Comment mode of a [comment](#Comment)
-	 */
-	export enum CommentMode {
-		/**
-		 * Displays the comment editor
-		 */
-		Editing = 0,
+    /**
+     * Comment mode of a [comment](#Comment)
+     */
+    export enum CommentMode {
+        /**
+         * Displays the comment editor
+         */
+        Editing = 0,
 
-		/**
-		 * Displays the preview of the comment
-		 */
-		Preview = 1
-	}
+        /**
+         * Displays the preview of the comment
+         */
+        Preview = 1
+    }
 
     /**
      * A collection of [comments](#Comment) representing a conversation at a particular range in a document.
@@ -8335,81 +8883,81 @@ declare module '@theia/plugin' {
         dispose(): void;
     }
 
-	/**
-	 * Author information of a [comment](#Comment)
-	 */
-	export interface CommentAuthorInformation {
-		/**
-		 * The display name of the author of the comment
-		 */
-		name: string;
+    /**
+     * Author information of a [comment](#Comment)
+     */
+    export interface CommentAuthorInformation {
+        /**
+         * The display name of the author of the comment
+         */
+        name: string;
 
-		/**
-		 * The optional icon path for the author
-		 */
-		iconPath?: Uri;
-	}
+        /**
+         * The optional icon path for the author
+         */
+        iconPath?: Uri;
+    }
 
-	/**
-	 * Reactions of a [comment](#Comment)
-	 */
-	export interface CommentReaction {
-		/**
-		 * The human-readable label for the reaction
-		 */
-		readonly label: string;
+    /**
+     * Reactions of a [comment](#Comment)
+     */
+    export interface CommentReaction {
+        /**
+         * The human-readable label for the reaction
+         */
+        readonly label: string;
 
-		/**
-		 * Icon for the reaction shown in UI.
-		 */
-		readonly iconPath: string | Uri;
+        /**
+         * Icon for the reaction shown in UI.
+         */
+        readonly iconPath: string | Uri;
 
-		/**
-		 * The number of users who have reacted to this reaction
-		 */
-		readonly count: number;
+        /**
+         * The number of users who have reacted to this reaction
+         */
+        readonly count: number;
 
-		/**
-		 * Whether the [author](CommentAuthorInformation) of the comment has reacted to this reaction
-		 */
-		readonly authorHasReacted: boolean;
-	}
+        /**
+         * Whether the [author](CommentAuthorInformation) of the comment has reacted to this reaction
+         */
+        readonly authorHasReacted: boolean;
+    }
 
     /**
      * A comment is displayed within the editor or the Comments Panel, depending on how it is provided.
      */
     export interface Comment {
-		/**
-		 * The human-readable comment body
-		 */
+        /**
+         * The human-readable comment body
+         */
         body: string | MarkdownString;
 
-		/**
-		 * [Comment mode](#CommentMode) of the comment
-		 */
+        /**
+         * [Comment mode](#CommentMode) of the comment
+         */
         mode: CommentMode;
 
-		/**
-		 * The [author information](#CommentAuthorInformation) of the comment
-		 */
+        /**
+         * The [author information](#CommentAuthorInformation) of the comment
+         */
         author: CommentAuthorInformation;
 
-		/**
-		 * Context value of the comment. This can be used to contribute comment specific actions.
-		 * For example, a comment is given a context value as `editable`. When contributing actions to `comments/comment/title`
-		 * using `menus` extension point, you can specify context value for key `comment` in `when` expression like `comment == editable`.
-		 */
+        /**
+         * Context value of the comment. This can be used to contribute comment specific actions.
+         * For example, a comment is given a context value as `editable`. When contributing actions to `comments/comment/title`
+         * using `menus` extension point, you can specify context value for key `comment` in `when` expression like `comment == editable`.
+         */
         contextValue?: string;
 
-		/**
-		 * Optional reactions of the [comment](#Comment)
-		 */
+        /**
+         * Optional reactions of the [comment](#Comment)
+         */
         reactions?: CommentReaction[];
 
-		/**
-		 * Optional label describing the [Comment](#Comment)
-		 * Label will be rendered next to authorName if exists.
-		 */
+        /**
+         * Optional label describing the [Comment](#Comment)
+         * Label will be rendered next to authorName if exists.
+         */
         label?: string;
     }
 

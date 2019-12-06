@@ -18,12 +18,14 @@ import { injectable, inject, named } from 'inversify';
 import { isOSX } from '../common/os';
 import { Emitter, Event } from '../common/event';
 import { CommandRegistry } from '../common/command';
+import { Disposable, DisposableCollection } from '../common/disposable';
 import { KeyCode, KeySequence, Key } from './keyboard/keys';
 import { KeyboardLayoutService } from './keyboard/keyboard-layout-service';
 import { ContributionProvider } from '../common/contribution-provider';
 import { ILogger } from '../common/logger';
 import { StatusBarAlignment, StatusBar } from './status-bar/status-bar';
 import { ContextKeyService } from './context-key-service';
+import * as common from '../common/keybinding';
 
 export enum KeybindingScope {
     DEFAULT,
@@ -60,22 +62,10 @@ export namespace Keybinding {
     }
 }
 
-export interface Keybinding {
-    /** Command identifier, this needs to be a unique string.  */
-    command: string;
-    /** Keybinding string as defined in packages/keymaps/README.md.  */
-    keybinding: string;
-    /**
-     * The optional keybinding context where this binding belongs to.
-     * If not specified, then this keybinding context belongs to the NOOP
-     * keybinding context.
-     */
-    context?: string;
-    /**
-     * https://code.visualstudio.com/docs/getstarted/keybindings#_when-clause-contexts
-     */
-    when?: string;
-}
+/**
+ * @deprecated import from `@theia/core/lib/common/keybinding` instead
+ */
+export type Keybinding = common.Keybinding;
 
 export interface ResolvedKeybinding extends Keybinding {
     /**
@@ -93,7 +83,14 @@ export interface ScopedKeybinding extends Keybinding {
 }
 
 export const KeybindingContribution = Symbol('KeybindingContribution');
+/**
+ * Representation of a keybinding contribution.
+ */
 export interface KeybindingContribution {
+    /**
+     * Registers keybindings.
+     * @param keybindings the keybinding registry.
+     */
     registerKeybindings(keybindings: KeybindingRegistry): void;
 }
 
@@ -195,8 +192,8 @@ export class KeybindingRegistry {
      *
      * @param binding
      */
-    registerKeybinding(binding: Keybinding): void {
-        this.doRegisterKeybinding(binding, KeybindingScope.DEFAULT);
+    registerKeybinding(binding: Keybinding): Disposable {
+        return this.doRegisterKeybinding(binding, KeybindingScope.DEFAULT);
     }
 
     /**
@@ -204,8 +201,8 @@ export class KeybindingRegistry {
      *
      * @param bindings
      */
-    registerKeybindings(...bindings: Keybinding[]): void {
-        this.doRegisterKeybindings(bindings, KeybindingScope.DEFAULT);
+    registerKeybindings(...bindings: Keybinding[]): Disposable {
+        return this.doRegisterKeybindings(bindings, KeybindingScope.DEFAULT);
     }
 
     /**
@@ -233,21 +230,30 @@ export class KeybindingRegistry {
         });
     }
 
-    protected doRegisterKeybindings(bindings: Keybinding[], scope: KeybindingScope = KeybindingScope.DEFAULT): void {
+    protected doRegisterKeybindings(bindings: Keybinding[], scope: KeybindingScope = KeybindingScope.DEFAULT): Disposable {
+        const toDispose = new DisposableCollection();
         for (const binding of bindings) {
-            this.doRegisterKeybinding(binding, scope);
+            toDispose.push(this.doRegisterKeybinding(binding, scope));
         }
+        return toDispose;
     }
 
-    protected doRegisterKeybinding(binding: Keybinding, scope: KeybindingScope = KeybindingScope.DEFAULT): void {
+    protected doRegisterKeybinding(binding: Keybinding, scope: KeybindingScope = KeybindingScope.DEFAULT): Disposable {
         try {
             this.resolveKeybinding(binding);
             if (this.containsKeybinding(this.keymaps[scope], binding)) {
                 throw new Error(`"${binding.keybinding}" is in collision with something else [scope:${scope}]`);
             }
             this.keymaps[scope].push(binding);
+            return Disposable.create(() => {
+                const index = this.keymaps[scope].indexOf(binding);
+                if (index !== -1) {
+                    this.keymaps[scope].splice(index, 1);
+                }
+            });
         } catch (error) {
             this.logger.warn(`Could not register keybinding:\n  ${Keybinding.stringify(binding)}\n${error}`);
+            return Disposable.NULL;
         }
     }
 
@@ -285,7 +291,7 @@ export class KeybindingRegistry {
     containsKeybinding(bindings: Keybinding[], binding: Keybinding): boolean {
         const bindingKeySequence = this.resolveKeybinding(binding);
         const collisions = this.getKeySequenceCollisions(bindings, bindingKeySequence)
-            .filter(b => b.context === binding.context);
+            .filter(b => b.context === binding.context && !b.when && !binding.when);
 
         if (collisions.full.length > 0) {
             this.logger.warn('Collided keybinding is ignored; ',
@@ -564,10 +570,10 @@ export class KeybindingRegistry {
                 } else {
                     const command = this.commandRegistry.getCommand(binding.command);
                     if (command) {
-                        const commandHandler = this.commandRegistry.getActiveHandler(command.id);
+                        const commandHandler = this.commandRegistry.getActiveHandler(command.id, binding.args);
 
                         if (commandHandler) {
-                            commandHandler.execute();
+                            commandHandler.execute(binding.args);
                         }
 
                         /* Note that if a keybinding is in context but the command is
@@ -652,16 +658,21 @@ export class KeybindingRegistry {
 
     setKeymap(scope: KeybindingScope, bindings: Keybinding[]): void {
         this.resetKeybindingsForScope(scope);
-        this.doRegisterKeybindings(bindings, scope);
+        this.toResetKeymap.set(scope, this.doRegisterKeybindings(bindings, scope));
         this.keybindingsChanged.fire(undefined);
     }
+
+    protected readonly toResetKeymap = new Map<KeybindingScope, Disposable>();
 
     /**
      * Reset keybindings for a specific scope
      * @param scope scope to reset the keybindings for
      */
     resetKeybindingsForScope(scope: KeybindingScope): void {
-        this.keymaps[scope] = [];
+        const toReset = this.toResetKeymap.get(scope);
+        if (toReset) {
+            toReset.dispose();
+        }
     }
 
     /**

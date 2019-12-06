@@ -14,24 +14,22 @@
  * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
  ********************************************************************************/
 
-import { injectable, inject } from 'inversify';
-import { CommandContribution, CommandRegistry, Command } from '@theia/core';
+import { Command, CommandContribution, CommandRegistry, ResourceProvider } from '@theia/core';
+import { ApplicationShell, NavigatableWidget, open, OpenerService, Saveable } from '@theia/core/lib/browser';
+import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
+import { ApplicationShellMouseTracker } from '@theia/core/lib/browser/shell/application-shell-mouse-tracker';
 import { CommandService } from '@theia/core/lib/common/command';
 import TheiaURI from '@theia/core/lib/common/uri';
-import URI from 'vscode-uri';
-import { ContextKeyService } from '@theia/core/lib/browser/context-key-service';
-import { DiffService } from '@theia/workspace/lib/browser/diff-service';
 import { EditorManager } from '@theia/editor/lib/browser';
-import { WebviewWidget } from '@theia/plugin-ext/lib/main/browser/webview/webview';
-import { ApplicationShell, NavigatableWidget, OpenerService, open, Saveable } from '@theia/core/lib/browser';
-import { ResourceProvider } from '@theia/core';
-import { ViewColumn } from '@theia/plugin-ext/lib/plugin/types-impl';
 import { TextDocumentShowOptions } from '@theia/plugin-ext/lib/common/plugin-api-rpc-model';
-import { fromViewColumn } from '@theia/plugin-ext/lib/plugin/type-converters';
-import { WorkspaceCommands } from '@theia/workspace/lib/browser';
-import { createUntitledResource } from '@theia/plugin-ext/lib/main/browser/editor/untitled-resource';
 import { DocumentsMainImpl } from '@theia/plugin-ext/lib/main/browser/documents-main';
-import { ApplicationShellMouseTracker } from '@theia/core/lib/browser/shell/application-shell-mouse-tracker';
+import { createUntitledResource } from '@theia/plugin-ext/lib/main/browser/editor/untitled-resource';
+import { fromViewColumn, toDocumentSymbol } from '@theia/plugin-ext/lib/plugin/type-converters';
+import { ViewColumn } from '@theia/plugin-ext/lib/plugin/types-impl';
+import { WorkspaceCommands } from '@theia/workspace/lib/browser';
+import { DiffService } from '@theia/workspace/lib/browser/diff-service';
+import { inject, injectable } from 'inversify';
+import URI from 'vscode-uri';
 
 export namespace VscodeCommands {
     export const OPEN: Command = {
@@ -44,10 +42,6 @@ export namespace VscodeCommands {
 
     export const SET_CONTEXT: Command = {
         id: 'setContext'
-    };
-
-    export const PREVIEW_HTML: Command = {
-        id: 'vscode.previewHtml'
     };
 }
 
@@ -122,26 +116,6 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
             // tslint:disable-next-line: no-any
             execute: (contextKey: any, contextValue: any) => {
                 this.contextKeyService.createKey(String(contextKey), contextValue);
-            }
-        });
-        commands.registerCommand(VscodeCommands.PREVIEW_HTML, {
-            isVisible: () => false,
-            // tslint:disable-next-line: no-any
-            execute: async (resource: URI, position?: any, label?: string, options?: any) => {
-                label = label || resource.fsPath;
-                const view = new WebviewWidget(label, { allowScripts: true }, {}, this.mouseTracker);
-                const res = await this.resources(new TheiaURI(resource));
-                const str = await res.readContents();
-                const html = this.getHtml(str);
-                this.shell.addWidget(view, { area: 'main', mode: 'split-right' });
-                this.shell.activateWidget(view.id);
-                view.setHTML(html);
-
-                const editorWidget = await this.editorManager.getOrCreateByUri(new TheiaURI(resource));
-                editorWidget.editor.onDocumentContentChanged(listener => {
-                    view.setHTML(this.getHtml(editorWidget.editor.document.getText()));
-                });
-
             }
         });
 
@@ -315,10 +289,27 @@ export class PluginVscodeCommandsContribution implements CommandContribution {
          * Show Opened File in New Window	workbench.action.files.showOpenedFileInNewWindow
          * Compare Opened File With	workbench.files.action.compareFileWith
          */
-    }
 
-    private getHtml(body: String): string {
-        return `<!DOCTYPE html><html><head></head>${body}</html>`;
+        // Register built-in language service commands
+        // see https://code.visualstudio.com/api/references/commands
+        // tslint:disable: no-any
+        commands.registerCommand(
+            {
+                id: 'vscode.executeDocumentSymbolProvider'
+            },
+            {
+                execute: (resource: URI) => commands.executeCommand('_executeDocumentSymbolProvider',
+                    { resource: monaco.Uri.parse(resource.toString()) }
+                ).then((value: any) => {
+                    if (!Array.isArray(value) || value === undefined) {
+                        return undefined;
+                    }
+                    return value.map(loc => toDocumentSymbol(loc));
+                })
+            }
+        );
+        // TODO register other `vscode.execute...` commands.
+        // see https://github.com/microsoft/vscode/blob/master/src/vs/workbench/api/common/extHostApiCommands.ts
     }
 
 }

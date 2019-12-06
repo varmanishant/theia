@@ -14,9 +14,9 @@
  * SPDX-License-Identifier: EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
  ********************************************************************************/
 import { injectable, inject, named, postConstruct } from 'inversify';
-import { HostedPluginServer, HostedPluginClient, PluginMetadata, PluginDeployer } from '../../common/plugin-protocol';
+import { HostedPluginServer, HostedPluginClient, PluginDeployer, GetDeployedPluginsParams, DeployedPlugin } from '../../common/plugin-protocol';
 import { HostedPluginSupport } from './hosted-plugin';
-import { ILogger } from '@theia/core';
+import { ILogger, Disposable } from '@theia/core';
 import { ContributionProvider } from '@theia/core';
 import { ExtPluginApiProvider, ExtPluginApi } from '../../common/plugin-ext-api-contribution';
 import { HostedPluginDeployerHandler } from './hosted-plugin-deployer-handler';
@@ -39,13 +39,15 @@ export class HostedPluginServerImpl implements HostedPluginServer {
 
     protected client: HostedPluginClient | undefined;
 
+    protected deployedListener: Disposable;
+
     constructor(
         @inject(HostedPluginSupport) private readonly hostedPlugin: HostedPluginSupport) {
     }
 
     @postConstruct()
     protected init(): void {
-        this.pluginDeployer.onDidDeploy(() => {
+        this.deployedListener = this.pluginDeployer.onDidDeploy(() => {
             if (this.client) {
                 this.client.onDidDeploy();
             }
@@ -54,34 +56,53 @@ export class HostedPluginServerImpl implements HostedPluginServer {
 
     dispose(): void {
         this.hostedPlugin.clientClosed();
+        this.deployedListener.dispose();
     }
     setClient(client: HostedPluginClient): void {
         this.client = client;
         this.hostedPlugin.setClient(client);
     }
 
-    getDeployedFrontendMetadata(): Promise<PluginMetadata[]> {
-        return this.deployerHandler.getDeployedFrontendMetadata();
-    }
-
-    async getDeployedMetadata(): Promise<PluginMetadata[]> {
-        const backendMetadata = await this.deployerHandler.getDeployedBackendMetadata();
+    async getDeployedPluginIds(): Promise<string[]> {
+        const backendMetadata = await this.deployerHandler.getDeployedBackendPluginIds();
         if (backendMetadata.length > 0) {
             this.hostedPlugin.runPluginServer();
         }
-        const allMetadata: PluginMetadata[] = [];
-        allMetadata.push(...await this.deployerHandler.getDeployedFrontendMetadata());
-        allMetadata.push(...backendMetadata);
-
-        // ask remote as well
-        const extraBackendPluginsMetadata = await this.hostedPlugin.getExtraPluginMetadata();
-        allMetadata.push(...extraBackendPluginsMetadata);
-
-        return allMetadata;
+        const plugins = new Set<string>();
+        for (const pluginId of await this.deployerHandler.getDeployedFrontendPluginIds()) {
+            plugins.add(pluginId);
+        }
+        for (const pluginId of backendMetadata) {
+            plugins.add(pluginId);
+        }
+        for (const pluginId of await this.hostedPlugin.getExtraDeployedPluginIds()) {
+            plugins.add(pluginId);
+        }
+        return [...plugins.values()];
     }
 
-    getDeployedBackendMetadata(): Promise<PluginMetadata[]> {
-        return Promise.resolve(this.deployerHandler.getDeployedBackendMetadata());
+    async getDeployedPlugins({ pluginIds }: GetDeployedPluginsParams): Promise<DeployedPlugin[]> {
+        if (!pluginIds.length) {
+            return [];
+        }
+        const plugins = [];
+        let extraDeployedPlugins: Map<string, DeployedPlugin> | undefined;
+        for (const pluginId of pluginIds) {
+            let plugin = this.deployerHandler.getDeployedPlugin(pluginId);
+            if (!plugin) {
+                if (!extraDeployedPlugins) {
+                    extraDeployedPlugins = new Map<string, DeployedPlugin>();
+                    for (const extraDeployedPlugin of await this.hostedPlugin.getExtraDeployedPlugins()) {
+                        extraDeployedPlugins.set(extraDeployedPlugin.metadata.model.id, extraDeployedPlugin);
+                    }
+                }
+                plugin = extraDeployedPlugins.get(pluginId);
+            }
+            if (plugin) {
+                plugins.push(plugin);
+            }
+        }
+        return plugins;
     }
 
     onMessage(message: string): Promise<void> {

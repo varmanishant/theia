@@ -21,7 +21,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Diagnostic, DiagnosticSeverity } from 'vscode-languageserver-types';
+import { Severity } from '@theia/core/lib/common/severity';
+import { Diagnostic } from 'vscode-languageserver-types';
 import vscodeURI from 'vscode-uri/lib/umd';
 import { ProblemPatternContribution, WatchingMatcherContribution } from './task-protocol';
 
@@ -62,56 +63,6 @@ export namespace FileLocationKind {
             return FileLocationKind.Relative;
         } else {
             return undefined;
-        }
-    }
-}
-
-export enum Severity {
-    Ignore = 0,
-    Info = 1,
-    Warning = 2,
-    Error = 3
-}
-
-export namespace Severity {
-
-    const _error = 'error';
-    const _warning = 'warning';
-    const _warn = 'warn';
-    const _info = 'info';
-
-    // Parses 'error', 'warning', 'warn', 'info' in call casings and falls back to ignore.
-    export function fromValue(value: string | undefined): Severity {
-        if (!value) {
-            return Severity.Ignore;
-        }
-
-        if (value.toLowerCase() === _error) {
-            return Severity.Error;
-        }
-
-        if (value.toLowerCase() === _warning || value.toLowerCase() === _warn) {
-            return Severity.Warning;
-        }
-
-        if (value.toLowerCase() === _info) {
-            return Severity.Info;
-        }
-        return Severity.Ignore;
-    }
-
-    export function toDiagnosticSeverity(value: Severity): DiagnosticSeverity {
-        switch (value) {
-            case Severity.Ignore:
-                return DiagnosticSeverity.Hint;
-            case Severity.Info:
-                return DiagnosticSeverity.Information;
-            case Severity.Warning:
-                return DiagnosticSeverity.Warning;
-            case Severity.Error:
-                return DiagnosticSeverity.Error;
-            default:
-                return DiagnosticSeverity.Error;
         }
     }
 }
@@ -216,9 +167,9 @@ export namespace ProblemPattern {
             message: value.message,
             location: value.location,
             line: value.line,
-            character: value.character,
+            character: value.column || value.character,
             endLine: value.endLine,
-            endCharacter: value.endCharacter,
+            endCharacter: value.endColumn || value.endCharacter,
             code: value.code,
             severity: value.severity,
             loop: value.loop

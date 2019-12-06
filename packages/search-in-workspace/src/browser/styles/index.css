@@ -21,7 +21,7 @@
 
 .t-siw-search-container {
     color: var(--theia-ui-font-color1);
-    padding: 1px 5px;
+    padding: 5px ;
     display: flex;
     flex-direction: column;
     height: 100%;
@@ -39,6 +39,7 @@
     font-size: var(--theia-ui-font-size1);
     padding-left: 8px;
     color: var(--theia-ui-font-color1);
+    padding: 3px 0 3px 4px;
 }
 
 .t-siw-search-container input[type="text"]:focus {
@@ -64,27 +65,15 @@
     margin-bottom: 5px;
 }
 
-.p-TabBar-toolbar .item .refresh {
-    background: var(--theia-icon-refresh) no-repeat;
-}
-
-.p-TabBar-toolbar .item .collapse-all {
-    background: var(--theia-icon-collapse-all) no-repeat;
-}
-
-.p-TabBar-toolbar .item .clear-all {
-    background: var(--theia-icon-clear) no-repeat;
-}
-
 .t-siw-search-container .searchHeader .search-field-container {
     background: var(--theia-layout-color2);
+    border-style: solid;
+    border-width: var(--theia-border-width);
+    border-color: var(--theia-border-color1);
 }
 
 .t-siw-search-container .searchHeader .search-field-container.focused {
-    border-style: solid;
-    border-width: var(--theia-border-width);
     border-color: var(--theia-accent-color3);
-    margin: -1px;
 }
 
 .t-siw-search-container .searchHeader .search-field {
@@ -159,11 +148,9 @@
 }
 
 .t-siw-search-container .searchHeader .button-container {
-    text-align: right;
-    padding-right: 5px;
-    padding-top: 5px;
+    text-align: center;
     display: flex;
-    justify-content: flex-end;
+    justify-content: center;
 }
 
 .t-siw-search-container .searchHeader .search-field .option,
@@ -186,8 +173,16 @@
     justify-content: center;
 }
 
+.t-siw-search-container .searchHeader .search-details {
+    position: relative;
+    padding-top: 5px;
+}
+
 .t-siw-search-container .searchHeader .search-details .button-container {
-    height: 5px;
+    position: absolute;
+    width: 25px;
+    top:0;
+    right:0;
 }
 
 .t-siw-search-container .searchHeader .search-details .button-container .btn{
@@ -200,7 +195,7 @@
 
 .t-siw-search-container .searchHeader .glob-field-container .glob-field {
     margin-bottom: 8px;
-    margin-left: 17px;
+    margin-left: 14px;
     display: flex;
     flex-direction: column;
 }
@@ -253,8 +248,8 @@
 
 .t-siw-search-container .resultLine .match {
     background: var(--theia-word-highlight-match-color1);
-    display: inline-block;
     line-height: normal;
+    white-space: pre;
 }
 
 .t-siw-search-container .resultLine .match.strike-through {
@@ -268,10 +263,7 @@
     background: var(--theia-word-highlight-replace-color0);
 }
 
-.noWrapInfo {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.t-siw-search-container .noWrapInfo {
     width: 100%;
 }
 
@@ -331,7 +323,7 @@
     width: 15px;
     min-width: 15px;
     justify-content: center;
-    margin-right: 2px;
+    margin-right: 1px;
     box-sizing: border-box;
 }
 
@@ -371,6 +363,7 @@
     height: 100%;
     display: inline-block;
     background: var(--theia-icon-replace-all) no-repeat center;
+    cursor: pointer;
 }
 
 .result-node-buttons .replace-result {
@@ -381,7 +374,8 @@
 }
 
 .replace-all-button.disabled {
-    opacity: 0.5;
+    opacity: var(--theia-mod-disabled-opacity);;
+    cursor: default;
 }
 
 .search-in-workspace-tab-icon {

@@ -29,12 +29,13 @@ import { ThemeService } from '@theia/core/lib/browser/theming';
 import { TerminalWidgetOptions, TerminalWidget } from './base/terminal-widget';
 import { MessageConnection } from 'vscode-jsonrpc';
 import { Deferred } from '@theia/core/lib/common/promise-util';
-import { TerminalPreferences } from './terminal-preferences';
+import { TerminalPreferences, TerminalRendererType, isTerminalRendererType, DEFAULT_TERMINAL_RENDERER_TYPE } from './terminal-preferences';
 import { TerminalContribution } from './terminal-contribution';
 import URI from '@theia/core/lib/common/uri';
 import { TerminalService } from './base/terminal-service';
 import { TerminalSearchBox } from './base/terminal-search-box';
 import { TerminalSearchWidgetFactory } from './search/terminal-search-widget';
+import { TerminalCopyOnSelectionHandler } from './terminal-copy-on-selection-handler';
 
 export const TERMINAL_WIDGET_FACTORY_ID = 'terminal';
 
@@ -79,6 +80,7 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
     @inject(ContributionProvider) @named(TerminalContribution) protected readonly terminalContributionProvider: ContributionProvider<TerminalContribution>;
     @inject(TerminalService) protected readonly terminalService: TerminalService;
     @inject(TerminalSearchWidgetFactory) protected readonly terminalSearchBoxFactory: TerminalSearchWidgetFactory;
+    @inject(TerminalCopyOnSelectionHandler) protected readonly copyOnSelectionHandler: TerminalCopyOnSelectionHandler;
 
     protected readonly onDidOpenEmitter = new Emitter<void>();
     readonly onDidOpen: Event<void> = this.onDidOpenEmitter.event;
@@ -112,6 +114,8 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
             fontWeightBold: this.preferences['terminal.integrated.fontWeightBold'],
             letterSpacing: this.preferences['terminal.integrated.letterSpacing'],
             lineHeight: this.preferences['terminal.integrated.lineHeight'],
+            scrollback: this.preferences['terminal.integrated.scrollback'],
+            rendererType: this.getTerminalRendererType(this.preferences['terminal.integrated.rendererType']),
             theme: {
                 foreground: cssProps.foreground,
                 background: cssProps.background,
@@ -129,8 +133,10 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         this.hoverMessage.style.borderWidth = '0.5px';
         this.hoverMessage.style.borderStyle = 'solid';
         this.hoverMessage.style.padding = '5px';
-        this.hoverMessage.style.zIndex = '1';
-        // initially invisible
+        // Above the xterm.js canvas layers:
+        // https://github.com/xtermjs/xterm.js/blob/ff790236c1b205469f17a21246141f512d844295/src/renderer/Renderer.ts#L41-L46
+        this.hoverMessage.style.zIndex = '10';
+        // Initially invisible:
         this.hoverMessage.style.display = 'none';
         this.node.appendChild(this.hoverMessage);
 
@@ -138,7 +144,17 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
             const lastSeparator = change.preferenceName.lastIndexOf('.');
             if (lastSeparator > 0) {
                 const preferenceName = change.preferenceName.substr(lastSeparator + 1);
-                this.term.setOption(preferenceName, this.preferences[change.preferenceName]);
+                let preferenceValue = this.preferences[change.preferenceName];
+
+                if (preferenceName === 'rendererType') {
+                    const newRendererType: string = this.preferences[change.preferenceName] as string;
+                    if (newRendererType !== this.getTerminalRendererType(newRendererType)) {
+                        // given terminal renderer type is not supported or invalid
+                        preferenceValue = DEFAULT_TERMINAL_RENDERER_TYPE;
+                    }
+                }
+
+                this.term.setOption(preferenceName, preferenceValue);
                 this.needsResize = true;
                 this.update();
             }
@@ -187,6 +203,12 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         this.toDispose.push(this.onTermDidClose);
         this.toDispose.push(this.onDidOpenEmitter);
 
+        this.toDispose.push(this.term.onSelectionChange(() => {
+            if (this.copyOnSelection) {
+                this.copyOnSelectionHandler.copy(this.term.getSelection());
+            }
+        }));
+
         for (const contribution of this.terminalContributionProvider.getContributions()) {
             contribution.onCreate(this);
         }
@@ -194,6 +216,18 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         this.searchBox = this.terminalSearchBoxFactory(this.term);
         this.searchBox.attach(this.node);
         this.toDispose.push(this.searchBox);
+    }
+
+    /**
+     * Returns given renderer type if it is valid and supported or default renderer otherwise.
+     *
+     * @param terminalRendererType desired terminal renderer type
+     */
+    private getTerminalRendererType(terminalRendererType?: string | TerminalRendererType): Xterm.RendererType {
+        if (terminalRendererType && isTerminalRendererType(terminalRendererType)) {
+            return terminalRendererType;
+        }
+        return DEFAULT_TERMINAL_RENDERER_TYPE;
     }
 
     showHoverMessage(x: number, y: number, message: string): void {
@@ -518,6 +552,11 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         }
         return true;
     }
+
+    protected get copyOnSelection(): boolean {
+        return this.preferences['terminal.integrated.copyOnSelection'];
+    }
+
     protected attachCustomKeyEventHandler(): void {
         this.term.attachCustomKeyEventHandler(e => this.customKeyHandler(e));
     }

@@ -20,11 +20,10 @@ import { injectable, inject, named } from 'inversify';
 import { ILogger, ConnectionErrorHandler, ContributionProvider, MessageService } from '@theia/core/lib/common';
 import { Emitter } from '@theia/core/lib/common/event';
 import { createIpcEnv } from '@theia/core/lib/node/messaging/ipc-protocol';
-import { HostedPluginClient, ServerPluginRunner, PluginMetadata, PluginHostEnvironmentVariable } from '../../common/plugin-protocol';
+import { HostedPluginClient, ServerPluginRunner, PluginHostEnvironmentVariable, DeployedPlugin } from '../../common/plugin-protocol';
 import { RPCProtocolImpl } from '../../common/rpc-protocol';
 import { MAIN_RPC_CONTEXT } from '../../common/plugin-api-rpc';
 import { HostedPluginCliContribution } from './hosted-plugin-cli-contribution';
-import { HostedPluginProcessesCache } from './hosted-plugin-processes-cache';
 import * as psTree from 'ps-tree';
 
 export interface IPCConnectionOptions {
@@ -43,9 +42,6 @@ export class HostedPluginProcess implements ServerPluginRunner {
     @inject(HostedPluginCliContribution)
     protected readonly cli: HostedPluginCliContribution;
 
-    @inject(HostedPluginProcessesCache)
-    protected readonly pluginProcessCache: HostedPluginProcessesCache;
-
     @inject(ContributionProvider)
     @named(PluginHostEnvironmentVariable)
     protected readonly pluginHostEnvironmentVariables: ContributionProvider<PluginHostEnvironmentVariable>;
@@ -54,14 +50,9 @@ export class HostedPluginProcess implements ServerPluginRunner {
     protected readonly messageService: MessageService;
 
     private childProcess: cp.ChildProcess | undefined;
-
     private client: HostedPluginClient;
 
     private terminatingPluginServer = false;
-
-    private async getClientId(): Promise<number> {
-        return await this.pluginProcessCache.getLazyClientId(this.client);
-    }
 
     public setClient(client: HostedPluginClient): void {
         if (this.client) {
@@ -70,13 +61,6 @@ export class HostedPluginProcess implements ServerPluginRunner {
             }
         }
         this.client = client;
-        this.getClientId().then(clientId => {
-            const childProcess = this.pluginProcessCache.retrieveClientChildProcess(clientId);
-            if (!this.childProcess && childProcess) {
-                this.childProcess = childProcess;
-                this.linkClientWithChildProcess(this.childProcess);
-            }
-        });
     }
 
     public clientClosed(): void {
@@ -96,12 +80,6 @@ export class HostedPluginProcess implements ServerPluginRunner {
     public onMessage(jsonMessage: any): void {
         if (this.childProcess) {
             this.childProcess.send(JSON.stringify(jsonMessage));
-        }
-    }
-
-    public markPluginServerTerminated(): void {
-        if (this.childProcess) {
-            this.pluginProcessCache.scheduleChildProcessTermination(this, this.childProcess);
         }
     }
 
@@ -128,7 +106,7 @@ export class HostedPluginProcess implements ServerPluginRunner {
             }
         });
         const hostedPluginManager = rpc.getProxy(MAIN_RPC_CONTEXT.HOSTED_PLUGIN_MANAGER_EXT);
-        hostedPluginManager.$stopPlugin('').then(() => {
+        hostedPluginManager.$stop().then(() => {
             emitter.dispose();
             this.killProcessTree(cp.pid);
         });
@@ -153,18 +131,10 @@ export class HostedPluginProcess implements ServerPluginRunner {
             logger: this.logger,
             args: []
         });
-        this.linkClientWithChildProcess(this.childProcess);
-
-    }
-
-    private linkClientWithChildProcess(childProcess: cp.ChildProcess): void {
-        childProcess.on('message', message => {
+        this.childProcess.on('message', message => {
             if (this.client) {
                 this.client.postMessage(message);
             }
-        });
-        this.getClientId().then(clientId => {
-            this.pluginProcessCache.linkLiveClientAndProcess(clientId, childProcess);
         });
     }
 
@@ -211,14 +181,32 @@ export class HostedPluginProcess implements ServerPluginRunner {
             return;
         }
         this.logger.error(`[${serverName}: ${pid}] IPC exited, with signal: ${signal}, and exit code: ${code}`);
-        this.messageService.error('Plugin runtime crashed unexpectedly, all plugins are not working, please reload...', { timeout: 15 * 60 * 1000 });
+
+        const message = 'Plugin runtime crashed unexpectedly, all plugins are not working, please reload the page.';
+        let hintMessage: string = 'If it doesn\'t help, please check Theia server logs.';
+        if (signal && signal.toUpperCase() === 'SIGKILL') {
+            // May happen in case of OOM or manual force stop.
+            hintMessage = 'Probably there is not enough memory for the plugins. ' + hintMessage;
+        }
+
+        this.messageService.error(message + ' ' + hintMessage, { timeout: 15 * 60 * 1000 });
     }
 
     private onChildProcessError(err: Error): void {
         this.logger.error(`Error from plugin host: ${err.message}`);
     }
 
-    async getExtraPluginMetadata(): Promise<PluginMetadata[]> {
+    /**
+     * Provides additional plugin ids.
+     */
+    public async getExtraDeployedPluginIds(): Promise<string[]> {
+        return [];
+    }
+
+    /**
+     * Provides additional deployed plugins.
+     */
+    public async getExtraDeployedPlugins(): Promise<DeployedPlugin[]> {
         return [];
     }
 

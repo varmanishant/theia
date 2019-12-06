@@ -19,9 +19,14 @@
 import { injectable, inject } from 'inversify';
 import { VariableRegistry } from './variable';
 import URI from '@theia/core/lib/common/uri';
+import { JSONExt, ReadonlyJSONValue } from '@phosphor/coreutils/lib/json';
 
 export interface VariableResolveOptions {
     context?: URI;
+    /**
+     * Used for resolving inputs, see https://code.visualstudio.com/docs/editor/variables-reference#_input-variables
+     */
+    configurationSection?: string;
 }
 
 /**
@@ -131,9 +136,17 @@ export namespace VariableResolverService {
                 return;
             }
             try {
-                const variable = this.variableRegistry.getVariable(name);
-                const value = variable && await variable.resolve(this.options.context);
-                this.resolved.set(name, value);
+                let variableName = name;
+                let argument: string | undefined;
+                const parts = name.split(':');
+                if (parts.length > 1) {
+                    variableName = parts[0];
+                    argument = parts[1];
+                }
+                const variable = this.variableRegistry.getVariable(variableName);
+                const value = variable && await variable.resolve(this.options.context, argument, this.options.configurationSection);
+                const stringValue = value !== undefined && value !== null && JSONExt.isPrimitive(value as ReadonlyJSONValue) ? String(value) : undefined;
+                this.resolved.set(name, stringValue);
             } catch (e) {
                 console.error(`Failed to resolved '${name}' variable`, e);
                 this.resolved.set(name, undefined);

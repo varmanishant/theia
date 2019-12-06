@@ -69,7 +69,7 @@ require('reflect-metadata');
 const { Container } = require('inversify');
 const { FrontendApplication } = require('@theia/core/lib/browser');
 const { frontendApplicationModule } = require('@theia/core/lib/browser/frontend-application-module');
-const { messagingFrontendModule } = require('@theia/core/lib/browser/messaging/messaging-frontend-module');
+const { messagingFrontendModule } = require('@theia/core/lib/${this.pck.isBrowser() ? 'browser/messaging/messaging-frontend-module' : 'electron-browser/messaging/electron-messaging-frontend-module'}');
 const { loggerFrontendModule } = require('@theia/core/lib/browser/logger-frontend-module');
 const { ThemeService } = require('@theia/core/lib/browser/theming');
 const { FrontendApplicationConfigProvider } = require('@theia/core/lib/browser/frontend-application-config-provider');
@@ -110,7 +110,7 @@ module.exports = Promise.resolve()${this.compileFrontendModuleImports(frontendMo
 // Useful for Electron/NW.js apps as GUI apps on macOS doesn't inherit the \`$PATH\` define
 // in your dotfiles (.bashrc/.bash_profile/.zshrc/etc).
 // https://github.com/electron/electron/issues/550#issuecomment-162037357
-// https://github.com/theia-ide/theia/pull/3534#issuecomment-439689082
+// https://github.com/eclipse-theia/theia/pull/3534#issuecomment-439689082
 require('fix-path')();
 
 // Workaround for https://github.com/electron/electron/issues/9225. Chrome has an issue where
@@ -125,44 +125,21 @@ process.env.LC_NUMERIC = 'C';
 const electron = require('electron');
 const { join, resolve } = require('path');
 const { fork } = require('child_process');
-const { app, shell, BrowserWindow, ipcMain, Menu } = electron;
+const { app, dialog, shell, BrowserWindow, ipcMain, Menu } = electron;
 
 const applicationName = \`${this.pck.props.frontend.config.applicationName}\`;
+const isSingleInstance = ${this.pck.props.backend.config.singleInstance === true ? 'true' : 'false'};
+
+if (isSingleInstance && !app.requestSingleInstanceLock()) {
+    // There is another instance running, exit now. The other instance will request focus.
+    app.quit();
+    return;
+}
 
 const nativeKeymap = require('native-keymap');
 const Storage = require('electron-store');
 const electronStore = new Storage();
 
-let canPreventStop = true;
-const windows = [];
-
-app.on('before-quit', async event => {
-    if (canPreventStop) {
-        // Pause the stop.
-        event.preventDefault();
-        let preventStop = false;
-        // Ask all opened windows whether they want to prevent the \`close\` event or not.
-        for (const window of windows) {
-            if (!preventStop) {
-                window.webContents.send('prevent-stop-request');
-                const preventStopPerWindow = await new Promise((resolve) => {
-                    ipcMain.once('prevent-stop-response', (_, arg) => {
-                        if (!!arg && 'preventStop' in arg && typeof arg.preventStop === 'boolean') {
-                            resolve(arg.preventStop);
-                        }
-                    })
-                });
-                if (preventStopPerWindow) {
-                    preventStop = true;
-                }
-            }
-        }
-        if (!preventStop) {
-            canPreventStop = false;
-            app.quit();
-        }
-    }
-});
 app.on('ready', () => {
     const { screen } = electron;
 
@@ -243,13 +220,20 @@ app.on('ready', () => {
         newWindow.on('close', saveWindowState);
         newWindow.on('resize', saveWindowStateDelayed);
         newWindow.on('move', saveWindowStateDelayed);
-        newWindow.on('closed', () => {
-            const index = windows.indexOf(newWindow);
-            if (index !== -1) {
-                windows.splice(index, 1);
-            }
-            if (windows.length === 0) {
-                app.quit();
+
+        // Fired when a beforeunload handler tries to prevent the page unloading
+        newWindow.webContents.on('will-prevent-unload', event => {
+            const preventStop = 0 !== dialog.showMessageBox(newWindow, {
+                type: 'question',
+                buttons: ['Yes', 'No'],
+                title: 'Confirm',
+                message: 'Are you sure you want to quit?',
+                detail: 'Any unsaved changes will not be saved.'
+            });
+
+            if (!preventStop) {
+                // This ignores the beforeunload callback, allowing the page to unload
+                event.preventDefault();
             }
         });
 
@@ -267,7 +251,6 @@ app.on('ready', () => {
         if (!!theUrl) {
             newWindow.loadURL(theUrl);
         }
-        windows.push(newWindow);
         return newWindow;
     }
 
@@ -285,6 +268,19 @@ app.on('ready', () => {
     // @ts-ignore
     const devMode = process.defaultApp || /node_modules[\/]electron[\/]/.test(process.execPath);
     const mainWindow = createNewWindow();
+
+    if (isSingleInstance) {
+        app.on('second-instance', (event, commandLine, workingDirectory) => {
+            // Someone tried to run a second instance, we should focus our window.
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                if (mainWindow.isMinimized()) {
+                    mainWindow.restore();
+                }
+                mainWindow.focus()
+            }
+        })
+    }
+
     const loadMainWindow = (port) => {
         if (!mainWindow.isDestroyed()) {
             mainWindow.loadURL('file://' + join(__dirname, '../../lib/index.html') + '?port=' + port);
@@ -293,10 +289,10 @@ app.on('ready', () => {
 
     // We cannot use the \`process.cwd()\` as the application project path (the location of the \`package.json\` in other words)
     // in a bundled electron application because it depends on the way we start it. For instance, on OS X, these are a differences:
-    // https://github.com/theia-ide/theia/issues/3297#issuecomment-439172274
+    // https://github.com/eclipse-theia/theia/issues/3297#issuecomment-439172274
     process.env.THEIA_APP_PROJECT_PATH = resolve(__dirname, '..', '..');
 
-    // Set the electron version for both the dev and the production mode. (https://github.com/theia-ide/theia/issues/3254)
+    // Set the electron version for both the dev and the production mode. (https://github.com/eclipse-theia/theia/issues/3254)
     // Otherwise, the forked backend processes will not know that they're serving the electron frontend.
     const { versions } = process;
     // @ts-ignore
@@ -326,7 +322,7 @@ app.on('ready', () => {
         });
         app.on('quit', () => {
             // If we forked the process for the clusters, we need to manually terminate it.
-            // See: https://github.com/theia-ide/theia/issues/835
+            // See: https://github.com/eclipse-theia/theia/issues/835
             process.kill(cp.pid);
         });
     }

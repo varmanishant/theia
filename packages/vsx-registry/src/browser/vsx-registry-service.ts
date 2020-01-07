@@ -33,6 +33,7 @@ export const ExtensionKeywords = Symbol('ExtensionKeyword');
 @injectable()
 export class VSXRegistryService {
     protected apiUrl: string;
+
     protected readonly toDispose = new DisposableCollection();
 
     protected readonly onDidUpdateSearchEmitter = new Emitter<void>();
@@ -70,6 +71,10 @@ export class VSXRegistryService {
 
     dispose(): void {
         this.toDispose.dispose();
+    }
+
+    apiUrlIsSet(): boolean {
+        return !!this.apiUrl;
     }
 
     async updateSearch(param?: VSXRegistrySearchParam): Promise<void> {

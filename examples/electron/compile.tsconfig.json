@@ -48,9 +48,6 @@
       "path": "../../packages/java/compile.tsconfig.json"
     },
     {
-      "path": "../../packages/java-debug/compile.tsconfig.json"
-    },
-    {
       "path": "../../packages/json/compile.tsconfig.json"
     },
     {

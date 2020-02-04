@@ -45,6 +45,8 @@ import { bindUserStorage } from '@theia/userstorage/lib/browser/user-storage-fro
 import { FileSystemWatcherServer } from '@theia/filesystem/lib/common/filesystem-watcher-protocol';
 import { MockFilesystemWatcherServer } from '@theia/filesystem/lib/common/test/mock-filesystem-watcher-server';
 import { bindLaunchPreferences } from './launch-preferences';
+import { EnvVariablesServer } from '@theia/core/lib/common/env-variables';
+import { MockEnvVariablesServerImpl } from '@theia/core/lib/browser/test/mock-env-variables-server';
 
 disableJSDOM();
 
@@ -458,6 +460,7 @@ describe('Launch Preferences', () => {
                 bindWorkspacePreferences(bind);
                 container.bind(WorkspaceService).toSelf().inSingletonScope();
                 container.bind(WindowService).toConstantValue(new MockWindowService());
+                container.bind(EnvVariablesServer).to(MockEnvVariablesServerImpl).inSingletonScope();
 
                 const workspaceServer = new MockWorkspaceServer();
                 workspaceServer['getMostRecentlyUsedWorkspace'] = async () => rootUri;

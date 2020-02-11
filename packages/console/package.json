@@ -5,7 +5,8 @@
   "dependencies": {
     "@theia/core": "^0.15.0",
     "@theia/monaco": "^0.15.0",
-    "anser": "^1.4.7"
+    "anser": "^1.4.7",
+    "inversify": "^5.0.1"
   },
   "publishConfig": {
     "access": "public"

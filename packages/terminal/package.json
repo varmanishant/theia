@@ -8,6 +8,7 @@
     "@theia/filesystem": "^0.15.0",
     "@theia/process": "^0.15.0",
     "@theia/workspace": "^0.15.0",
+    "inversify": "^5.0.1",
     "xterm": "3.13.0"
   },
   "publishConfig": {

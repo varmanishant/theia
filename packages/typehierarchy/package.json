@@ -7,6 +7,7 @@
     "@theia/editor": "^0.15.0",
     "@theia/languages": "^0.15.0",
     "@types/uuid": "^3.4.3",
+    "inversify": "^5.0.1",
     "uuid": "^3.2.1"
   },
   "publishConfig": {

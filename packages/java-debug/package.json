@@ -5,6 +5,7 @@
   "dependencies": {
     "@theia/debug": "^0.15.0",
     "@theia/java": "^0.15.0",
+    "inversify": "^5.0.1",
     "lodash": "^4.17.10"
   },
   "publishConfig": {

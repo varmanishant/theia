@@ -12,6 +12,7 @@
     "@theia/monaco": "^0.15.0",
     "@theia/workspace": "^0.15.0",
     "command-exists": "^1.2.8",
+    "inversify": "^5.0.1",
     "typescript-language-server": "^0.4.0"
   },
   "publishConfig": {

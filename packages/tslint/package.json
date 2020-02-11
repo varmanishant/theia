@@ -6,6 +6,7 @@
     "access": "public"
   },
   "dependencies": {
+    "inversify": "^5.0.1",
     "tslint-language-service": "^0.9.9"
   },
   "keywords": [

@@ -6,7 +6,8 @@
     "@theia/core": "^0.15.0",
     "@theia/languages": "^0.15.0",
     "@theia/monaco": "^0.15.0",
-    "@theia/process": "^0.15.0"
+    "@theia/process": "^0.15.0",
+    "inversify": "^5.0.1"
   },
   "publishConfig": {
     "access": "public"

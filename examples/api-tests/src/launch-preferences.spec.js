@@ -92,6 +92,18 @@ describe('Launch Preferences', function () {
         compounds: [validCompound]
     };
 
+    const client = fileSystem.getClient();
+    const originalShouldOverwrite = client.shouldOverwrite;
+
+    before(() => {
+        // fail tests if out of async happens
+        client.shouldOverwrite = async () => (assert.fail('should be in sync'), false);
+    });
+
+    after(() => {
+        client.shouldOverwrite = originalShouldOverwrite;
+    });
+
     testSuite({
         name: 'No Preferences',
         expectation: defaultLaunch

@@ -34,7 +34,7 @@ export abstract class AbstractCmdClickTerminalContribution implements TerminalCo
         const term = terminalWidget.getTerminal();
         const regexp = await this.getRegExp(terminalWidget);
         const handler = this.getHandler(terminalWidget);
-        const validate = this.getValidate(terminalWidget);
+        // const validate = this.getValidate(terminalWidget);
         const wrappedHandler = (event: MouseEvent, match: string) => {
             event.preventDefault();
             if (this.isCommandPressed(event) || this.wasTouchEvent(event, terminalWidget.lastTouchEndEvent)) {
@@ -43,20 +43,23 @@ export abstract class AbstractCmdClickTerminalContribution implements TerminalCo
                 term.focus();
             }
         };
-        const matcherId = term.registerLinkMatcher(regexp, wrappedHandler, {
-            willLinkActivate: (event: MouseEvent, uri: string) => this.isCommandPressed(event) || this.wasTouchEvent(event, terminalWidget.lastTouchEndEvent),
-            tooltipCallback: (event: MouseEvent, uri: string) => {
-                if (!this.wasTouchEvent(event, terminalWidget.lastTouchEndEvent)) {
-                    terminalWidget.showHoverMessage(event.clientX, event.clientY, this.getHoverMessage());
-                }
-            },
-            leaveCallback: (event: MouseEvent, uri: string) => {
-                terminalWidget.hideHover();
-            },
-            validationCallback: async (uri: string, callBack: (isValid: boolean) => void) => {
-                callBack(await validate(uri));
-            }
-        });
+        const matcherId = term.registerLinkMatcher(regexp, wrappedHandler
+        // ,
+        // {
+        //     willLinkActivate: (event: MouseEvent, uri: string) => this.isCommandPressed(event) || this.wasTouchEvent(event, terminalWidget.lastTouchEndEvent),
+        //     tooltipCallback: (event: MouseEvent, uri: string) => {
+        //         if (!this.wasTouchEvent(event, terminalWidget.lastTouchEndEvent)) {
+        //             terminalWidget.showHoverMessage(event.clientX, event.clientY, this.getHoverMessage());
+        //         }
+        //     },
+        //     leaveCallback: (event: MouseEvent, uri: string) => {
+        //         terminalWidget.hideHover();
+        //     },
+        //     validationCallback: async (uri: string, callBack: (isValid: boolean) => void) => {
+        //         callBack(await validate(uri));
+        //     }
+        // }
+        );
         terminalWidget.onDispose(() => {
             term.deregisterLinkMatcher(matcherId);
         });

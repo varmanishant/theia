@@ -15,7 +15,7 @@
  ********************************************************************************/
 
 import * as Xterm from 'xterm';
-import { proposeGeometry } from 'xterm/lib/addons/fit/fit';
+import { FitAddon  } from 'xterm-addon-fit';
 import { inject, injectable, named, postConstruct } from 'inversify';
 import { ContributionProvider, Disposable, Event, Emitter, ILogger, DisposableCollection } from '@theia/core';
 import { Widget, Message, WebSocketConnectionProvider, StatefulWidget, isFirefox, MessageLoop, KeyCode } from '@theia/core/lib/browser';
@@ -49,6 +49,7 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
     protected readonly onTermDidClose = new Emitter<TerminalWidget>();
     protected terminalId = -1;
     protected term: Xterm.Terminal;
+    protected fitAddon: FitAddon;
     protected restored = false;
     protected closeOnDispose = true;
     protected waitForConnection: Deferred<MessageConnection> | undefined;
@@ -89,8 +90,9 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         this.addClass('terminal-container');
 
         this.term = new Xterm.Terminal({
-            experimentalCharAtlas: 'dynamic',
-            cursorBlink: false,
+            cursorBlink: true,
+            cursorStyle: 'bar',
+            cursorWidth: 2,
             fontFamily: this.preferences['terminal.integrated.fontFamily'],
             fontSize: this.preferences['terminal.integrated.fontSize'],
             fontWeight: this.preferences['terminal.integrated.fontWeight'],
@@ -101,6 +103,9 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
             rendererType: this.getTerminalRendererType(this.preferences['terminal.integrated.rendererType']),
             theme: this.themeService.theme
         });
+
+        this.fitAddon = new FitAddon();
+        this.term.loadAddon(this.fitAddon);
 
         this.hoverMessage = document.createElement('div');
         this.hoverMessage.textContent = 'Cmd + click to follow link';
@@ -420,11 +425,14 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
         }
         this.termOpened = true;
         this.initialData = '';
-
         if (isFirefox) {
-            // The software scrollbars don't work with xterm.js, so we disable the scrollbar if we are on firefox.
-            (this.term.element.children.item(0) as HTMLElement).style.overflow = 'hidden';
+            console.log('Scroll bar may not work in Firefox.');
         }
+
+        // if (isFirefox) {
+        //     // The software scrollbars don't work with xterm.js, so we disable the scrollbar if we are on firefox.
+        //     (this.term.element.children.item(0) as HTMLElement).style.overflow = 'hidden';
+        // }
     }
     protected write(data: string): void {
         if (this.termOpened) {
@@ -458,10 +466,11 @@ export class TerminalWidgetImpl extends TerminalWidget implements StatefulWidget
     }
 
     protected resizeTerminal(): void {
-        const geo = proposeGeometry(this.term);
-        const cols = geo.cols;
-        const rows = geo.rows - 1; // subtract one row for margin
-        this.term.resize(cols, rows);
+        this.fitAddon.fit();
+        // const geo = proposeGeometry(this.term);
+        // const cols = geo.cols;
+        // const rows = geo.rows - 1; // subtract one row for margin
+        // this.term.resize(cols, rows);
     }
 
     protected resizeTerminalProcess(): void {
